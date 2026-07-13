@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- Historical Odessa baseline: device tree stopped at lineage-19.1. -->
+  <project path="device/motorola/odessa"
+           name="LineageOS/android_device_motorola_odessa"
+           remote="github"
+           revision="49f6257549cd2081e7a07d7efae4ba51f3139983" />
+
+  <!-- Newest published SM6150 common/kernel baseline (lineage-20). -->
+  <project path="device/motorola/sm6150-common"
+           name="LineageOS/android_device_motorola_sm6150-common"
+           remote="github"
+           revision="47c9e585cf78f2371a4d12766925a0e73b5a97fb" />
+  <project path="kernel/motorola/sm6150"
+           name="LineageOS/android_kernel_motorola_sm6150"
+           remote="github"
+           revision="112b525abbc08298256abedbf984e0e8c20d0338" />
+
+  <!-- Branch-current shared Motorola HALs for the lineage-23.2 checkout. -->
+  <project path="hardware/motorola"
+           name="LineageOS/android_hardware_motorola"
+           remote="github"
+           revision="ffd5182343fb63227308f0f8b268358e3bd2a3b6" />
+</manifest>

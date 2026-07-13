@@ -110,3 +110,20 @@ c9a0cf842bd4e4a90626f57413e14ce82f795c12461e4828253457b1468a2202  vbmeta.img
 - The package is acceptable only for offline inspection, historical Android 10 comparison, original partition-layout research, and proprietary-blob comparison.
 - Obtain the newest exact `XT2087-1` Brazilian/RETLA package through Motorola's official Software Fix/Rescue route. Download and inspect it without initiating Rescue. Prefer an exact or newer compatible package relative to bootloader `...-220629` and baseband `M7150_22.31.04.72R`.
 - Official Motorola references: <https://en-us.support.motorola.com/app/softwarefix>, <https://en-us.support.motorola.com/app/answers/detail/a_id/143893>, <https://en-us.support.motorola.com/app/answers/detail/a_id/158726/>, and <https://en-us.support.motorola.com/app/answers/detail/a_id/167770/>.
+
+## LineageOS 23.2 configuration baseline
+
+- The Android source checkout is initialized on `lineage-23.2` / Android 16, with Lineage's active release configuration `bp4a`.
+- `manifests/odessa.xml` pins the initial source baseline to immutable commits:
+  - Odessa device tree `49f6257549cd2081e7a07d7efae4ba51f3139983` (the only published LineageOS branch is `lineage-19.1`);
+  - SM6150 common tree `47c9e585cf78f2371a4d12766925a0e73b5a97fb` (newest published branch `lineage-20`);
+  - SM6150 kernel `112b525abbc08298256abedbf984e0e8c20d0338` (newest published branch `lineage-20`);
+  - branch-current shared Motorola hardware tree `ffd5182343fb63227308f0f8b268358e3bd2a3b6`.
+- The pinned manifest is active through `lineageos/.repo/local_manifests/odessa.xml`, and all four projects synced successfully.
+- The historical shell-based proprietary extraction scripts were ported locally to the current Python `extract-utils` interface. The old common proprietary list contained duplicate destinations that current tooling rejects; those duplicates were removed while retaining the pinned Wi-Fi Display variants.
+- The common tree's obsolete `device/qcom/sepolicy_vndr-legacy-um/SEPolicy.mk` include was migrated to the branch-current `device/qcom/sepolicy_vndr/legacy-um/SEPolicy.mk` path.
+- Baseline vendor makefiles were generated from the proprietary lists. No proprietary payload is currently considered complete.
+- `source build/envsetup.sh && lunch lineage_odessa-bp4a-userdebug` now succeeds and reports LineageOS `23.2`, Android `16`, target `lineage_odessa`, and both ARM64/ARM architectures.
+- Direct extraction from the running TequilaOS installation is incomplete: unprivileged ADB receives `Permission denied` on `/vendor`, and `adb shell su -c id` was denied. Do not weaken device permissions to work around this.
+- The LineageOS manual ZIP extraction guide is applicable once a suitable exact ROM/OTA package is available: unpack the payload or dynamic partitions to a host directory, then run `extract-files.py` against that directory. The currently available Android 10 stock package is too old to be accepted as the target blob source.
+- Next build blocker: obtain an exact/new-enough `odessa` ROM or stock OTA payload (preferably the installed TequilaOS package or Motorola Android 11 RETLA firmware), extract it host-side, and reconcile every missing blob before attempting a build.
