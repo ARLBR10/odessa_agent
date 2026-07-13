@@ -126,4 +126,22 @@ c9a0cf842bd4e4a90626f57413e14ce82f795c12461e4828253457b1468a2202  vbmeta.img
 - `source build/envsetup.sh && lunch lineage_odessa-bp4a-userdebug` now succeeds and reports LineageOS `23.2`, Android `16`, target `lineage_odessa`, and both ARM64/ARM architectures.
 - Direct extraction from the running TequilaOS installation is incomplete: unprivileged ADB receives `Permission denied` on `/vendor`, and `adb shell su -c id` was denied. Do not weaken device permissions to work around this.
 - The LineageOS manual ZIP extraction guide is applicable once a suitable exact ROM/OTA package is available: unpack the payload or dynamic partitions to a host directory, then run `extract-files.py` against that directory. The currently available Android 10 stock package is too old to be accepted as the target blob source.
-- Next build blocker: obtain an exact/new-enough `odessa` ROM or stock OTA payload (preferably the installed TequilaOS package or Motorola Android 11 RETLA firmware), extract it host-side, and reconcile every missing blob before attempting a build.
+- The exact installed TequilaOS payload has now been obtained and verified; the next build blocker is reconciling the historical proprietary lists against that payload and the newer public SM6150 trees.
+
+## Community-source evaluation and exact TequilaOS payload
+
+- The XDA TequilaOS download is still available as `tequila-uno-20240117-0816-UNOFFICIAL-odessa.zip`. It was downloaded to the ignored path `lineageos/.downloads/`.
+- Pixeldrain reports SHA-256 `2eebc8ee17bcbc3a28d96b7b1dbf1b6769c6281d437194fbf582f0e2b365fdb6`; the downloaded file independently matched.
+- The ZIP is payload-based and contains `boot`, `dtbo`, `product`, `recovery`, `system`, `vbmeta`, and `vendor`. `ota_extractor` successfully extracted every partition.
+- The extracted build fingerprint is exactly the fingerprint observed on the connected phone: `motorola/tequila_odessa/odessa:14/UQ1A.240105.004.A1/24010712:user/release-keys`. This establishes the ZIP as the matching installed-ROM package, not merely a similar build.
+- Package properties confirm Android 14, framework security patch `2024-01-05`, vendor security patch `2023-01-01`, shipping API 29, and board `sm6150`.
+- The packaged boot image uses header version 2 and contains Linux `4.14.190-Amber`, built 2024-01-17 with Android clang 14. This matches the running-device kernel identity.
+- Host-side extraction with the migrated proprietary lists now obtains almost all Odessa-specific blobs. The remaining failures are primarily obsolete or separately sourced common Wi-Fi Display entries, root-relative old-list paths, pinned hashes from another Motorola model, and the absent `vendor/bin/charge_only_mode`. Reconcile the lists against the newer public SM6150 trees rather than weakening extraction checks.
+- The repository linked as `delawcharles/device_motorola_odessa` is not a LineageOS 20-era tree: its only branch is `staging/lineage-17.1`, head `431fd9cb9c395bd12ace3968de5384c0e6b07891`, last pushed in 2020. Keep it only as early-history evidence.
+- The 2025 Project Infinity X Android 16 thread publishes more useful device sources:
+  - Odessa device branch `infinityx`, head `423733e268d2e05056166a0d4413a710d261b56a`;
+  - SM6150 common branch `infinity`, head `7bfd3cd1ab3f499082ca24c7243569ba4a83edbb`;
+  - its thread links `Frost444/kernel_motorola_liber`; the newer `miguelbarretoo/android_kernel_motorola_sm6150` fork has an Android 16 QPR2 head `c31c33d81187844b94b546f50db73610e95ac479`.
+- The newer kernel remains Linux 4.14.190, contains `vendor/odessa_defconfig`, and that defconfig generated successfully for ARM64. The generated local version is `-FlopX-Kernel`, showing inherited branding that must be cleaned before adoption.
+- The candidate kernel has no merge base with the current LineageOS kernel history and differs in 319 files (5,791 insertions, 7,256 deletions). Its recent history added and removed several root/SUSFS implementations; the selected QPR2 tip is explicitly `sm6150: remove all ksu support`, and no KSU/SUSFS configuration remained in the generated Odessa config.
+- Adoption decision: use the exact TequilaOS payload as the immediate proprietary-blob and working-behavior reference; use the Infinity X device/common/kernel repositories as migration and patch evidence. Do not replace the pinned LineageOS baseline wholesale until individual changes are reviewed, the kernel builds under LineageOS 23.2, and boot/security behavior is validated.
