@@ -145,3 +145,49 @@ c9a0cf842bd4e4a90626f57413e14ce82f795c12461e4828253457b1468a2202  vbmeta.img
 - The newer kernel remains Linux 4.14.190, contains `vendor/odessa_defconfig`, and that defconfig generated successfully for ARM64. The generated local version is `-FlopX-Kernel`, showing inherited branding that must be cleaned before adoption.
 - The candidate kernel has no merge base with the current LineageOS kernel history and differs in 319 files (5,791 insertions, 7,256 deletions). Its recent history added and removed several root/SUSFS implementations; the selected QPR2 tip is explicitly `sm6150: remove all ksu support`, and no KSU/SUSFS configuration remained in the generated Odessa config.
 - Adoption decision: use the exact TequilaOS payload as the immediate proprietary-blob and working-behavior reference; use the Infinity X device/common/kernel repositories as migration and patch evidence. Do not replace the pinned LineageOS baseline wholesale until individual changes are reviewed, the kernel builds under LineageOS 23.2, and boot/security behavior is validated.
+
+## 2026-07-13 proprietary reconciliation and focused Android 16 build
+
+### Revisions and blob provenance
+
+- The source baseline remained pinned; no community tree or kernel replaced it:
+  - `device/motorola/odessa`: `49f6257549cd2081e7a07d7efae4ba51f3139983`;
+  - `device/motorola/sm6150-common`: `47c9e585cf78f2371a4d12766925a0e73b5a97fb`;
+  - `kernel/motorola/sm6150`: `112b525abbc08298256abedbf984e0e8c20d0338`;
+  - `hardware/motorola`: `ffd5182343fb63227308f0f8b268358e3bd2a3b6`.
+- The sole accepted proprietary source is `.downloads/tequila-uno-20240117-0816-UNOFFICIAL-odessa.zip`, SHA-256 `2eebc8ee17bcbc3a28d96b7b1dbf1b6769c6281d437194fbf582f0e2b365fdb6`. Its extracted filesystem is `.downloads/tequila-uno-20240117/images`.
+- The final lists identify this ZIP and hash in their headers. They contain 208 Odessa entries and 871 common entries. A host-side revalidation found zero missing sources, zero pinned-hash mismatches, and zero duplicate destinations in both lists.
+- `system_ext/priv-app/ims/ims.apk` is the only retained hash-pinned blob. Its old Lineage-list hash `2fbaabee440315379ad284c38ebe2a006db50216` was replaced with the exact Tequila file's SHA-1 `2d54a5285aac0e97b70d20dd26bdcb281ffa9607`; it is not a separately sourced blob.
+- No Edge S, other Motorola firmware, community-ROM, or other separately sourced blob remains in the generated vendor trees.
+
+### Reconciliation decisions
+
+- Removed Odessa `vendor/bin/charge_only_mode`: it is absent from the exact Tequila payload and the modern comparison trees. Removed common `vendor/etc/init/hw/init.mmi.charge_only.rc` with it because retaining an init service for a nonexistent executable is invalid. Charge-only mode is not claimed supported; implementing and validating it is future device-behavior work.
+- Removed proprietary `vendor/lib64/com.motorola.hardware.biometric.fingerprint@1.0.so` and common `vendor/lib64/libqsap_sdk.so`: both interfaces are built from the pinned `hardware/motorola` source tree. The generated vendor namespaces import `hardware/motorola`.
+- Removed the 87-entry Motorola Edge S Wi-Fi Display set. This means all 71 old entries whose list text contains `Wfd`, `wfd`, or `wifidisplay`, plus these 16 companion entries:
+  - `system_ext/lib/{libmmosal,libmmparser_lite,libmmrtpdecoder,libmmrtpencoder}.so`;
+  - `system_ext/lib64/{libmmosal,libmmparser_lite,libmmrtpdecoder,libmmrtpencoder}.so`;
+  - `vendor/lib/{libFileMux_proprietary,libhdcp1prov,libhdcp2p2prov,libhdcpsrm,libmm-hdcpmgr,libmmosal,libmmrtpdecoder_proprietary,libmmrtpencoder_proprietary}.so`.
+  Every file in this set was hash-pinned from a different device/firmware, absent from the matching Tequila package, and absent from the reviewed modern Odessa common tree. `WfdCommon` was also removed from `PRODUCT_BOOT_JARS`; `libnl` and `libwfdaac_vendor` were removed from the obsolete Wi-Fi Display product block. Wi-Fi Display is not claimed supported.
+- Removed root-relative `lib64/libaptX_encoder.so` and `lib64/libaptXHD_encoder.so`: these historical extraction paths do not exist in the exact package or the reviewed modern Odessa list. The Tequila payload still supplies the DSP-side `vendor/lib/rfsa/adsp/capi_v2_aptX_Classic.so` and `capi_v2_aptX_HD.so`; Bluetooth aptX behavior remains a hardware test item, not an assumption.
+- Moved old root-relative `etc/permissions/privapp-permissions-qti.xml` to its actual Tequila location, `system_ext/etc/permissions/privapp-permissions-qti.xml`. Likewise, `moto-telephony.xml` and `moto-telephony.jar` now use their actual `system_ext` paths instead of legacy source-to-destination remaps.
+- Odessa camera permission files now extract directly from `vendor/etc/permissions`; Tequila already places them there, so the old product-to-vendor copy syntax was removed.
+- Added the 32-bit and 64-bit Tequila OMX audio encoder blobs `libOmxAacEnc`, `libOmxAmrEnc`, `libOmxEvrcEnc`, `libOmxG711Enc`, and `libOmxQcelp13Enc`; they were present in the exact payload and required by the retained media graph.
+- Current extract-utils package syntax replaced obsolete leading `-` package markers. `MODULE_SUFFIX=_system_ext` disambiguates same-basename `system_ext` and vendor IMS/data/display libraries. Narrow `DISABLE_DEPS` markers were added only where the legacy blob's ELF graph names an unavailable architecture/partition variant; they were not used to hide missing source files.
+
+### Generated vendor and build integration
+
+- Current LineageOS Python extract-utils scripts now drive the Odessa/common pair. Final extraction from `.downloads/tequila-uno-20240117/images` exited successfully, restored the exact pinned IMS file, and regenerated `vendor/motorola/odessa` and `vendor/motorola/sm6150-common` makefiles without a partial result.
+- The generated integrations parse successfully through Soong and Kati. Product namespaces now cover the branch-current Qualcomm display, WLAN, data-services, boot-control, and Motorola source modules needed by the blob dependency graph.
+- Historical duplicate local boot-control modules were removed in favor of `hardware/qcom-caf/bootctrl`. Historical local LiveDisplay Soong definitions were removed in favor of branch-current `vendor.lineage.livedisplay-service.sdm`. Other migrated product modules include `gralloc.qcom`, `hwcomposer.qcom`, `libstdc++_vendor`, `android.hardware.thermal-service.qti`, and `android.hardware.wifi-service`.
+- Both duplicate kernel `audio_kernel_headers` Android make definitions were removed; the branch-current `hardware/qcom-caf/common` header module is the single owner.
+- Four strict-prototype fixes were required for the pinned 4.14 kernel under the Android 16 clang toolchain: `tty_diag_channel_abandon_request(void)`, `tty_diag_get_dbg_ftm_flag_value(void)`, `ce_services_legacy(void)`, and `target_if_get_ctx(void)`. These match their existing header declarations and do not change runtime behavior.
+
+### Verified result
+
+- `source build/envsetup.sh && lunch lineage_odessa-bp4a-userdebug` succeeded with `PLATFORM_VERSION=16`, `TARGET_PRODUCT=lineage_odessa`, `TARGET_BUILD_VARIANT=userdebug`, `TARGET_ARCH=arm64`, release config `bp4a`, and LineageOS `23.2`.
+- `m bootimage` completed successfully on focused attempt 27. Full log: `lineageos/.downloads/build-logs/m-bootimage-20260713-attempt27.log`.
+- Output: `lineageos/out/target/product/odessa/boot.img`, exactly 67,108,864 bytes, SHA-256 `c29246952c100b5116682a1875ab5c08c3c56638653e24bef4fa8c240a4ce93e`.
+- No focused-build source blocker remains. The next untested build gate is a complete product/target-files build, which may expose vendor, VINTF, SELinux, partition-size, or packaging defects not exercised by `bootimage`.
+- Known focused-build warnings remain and must not be mistaken for hardware readiness: malformed non-string touchscreen-overlay `status` properties, duplicate fingerprint notifier exports because both ETS and FPC modules build, old common-tree firmware-mount mkdir overrides, and depmod metadata warnings. Resolve or validate these before any image is considered flashable.
+- This was HOST ONLY. Nothing was flashed, booted, sideloaded, or changed on the phone.
