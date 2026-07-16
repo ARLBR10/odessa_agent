@@ -191,3 +191,65 @@ c9a0cf842bd4e4a90626f57413e14ce82f795c12461e4828253457b1468a2202  vbmeta.img
 - No focused-build source blocker remains. The next untested build gate is a complete product/target-files build, which may expose vendor, VINTF, SELinux, partition-size, or packaging defects not exercised by `bootimage`.
 - Known focused-build warnings remain and must not be mistaken for hardware readiness: malformed non-string touchscreen-overlay `status` properties, duplicate fingerprint notifier exports because both ETS and FPC modules build, old common-tree firmware-mount mkdir overrides, and depmod metadata warnings. Resolve or validate these before any image is considered flashable.
 - This was HOST ONLY. Nothing was flashed, booted, sideloaded, or changed on the phone.
+
+## 2026-07-14 interrupted full target-files build
+
+- A HOST ONLY `m target-files-package` run was attempted seven times for `lineage_odessa-bp4a-userdebug`; no phone command was issued and no target-files archive was produced.
+- Attempt 1 reached 74,490/198,469 actions (37%) and exposed the first device blocker: removed `cutils/threads.h` in the legacy GPS utility. Attempt 2 was interrupted during build parsing. Logs: `lineageos/.downloads/build-logs/target-files-package-20260713-215237-attempt1.log` and `...-222707-attempt2.log`.
+- Subsequent incremental fixes, all still uncommitted, were:
+  - remove unused `cutils/threads.h` from `device/motorola/sm6150-common/gps/pla/android/loc_pla.h`;
+  - qualify `move` as `std::move` in `gps/utils/LocIpc.cpp`;
+  - move the kernel's private `struct sched_param` from exported `include/uapi/linux/sched/types.h` to internal `include/linux/sched.h`, avoiding collision with Bionic's definition;
+  - delete obsolete Odessa `vendor_hal_fingerprint_fpc` policy and label `fpc_ident` with `hal_fingerprint_default_exec`;
+  - define `PTN_MULTIIMGOEM` and `PTN_MULTIIMGQTI` in common `gpt-utils/gpt-utils.h` for the current QTI boot-control implementation.
+- Attempts 3-6 verified those blockers in sequence. Logs: `...-223134-attempt3.log`, `...-223410-attempt4.log`, `...-225524-attempt5.log`, and `...-232149-attempt6.log`.
+- Attempt 7 passed the previous GPS, scheduler-UAPI, SELinux, and boot-control failures and continued compiling/installing C/C++, Rust, Java, Wi-Fi supplicant interfaces, recovery libraries, GNSS, radio, and system applications. Its log ends abruptly at 10,296/64,927 remaining actions (15%) without `BUILD_EXIT_STATUS`; the user reports the Linux kernel killed the process for excessive RAM use. Log: `lineageos/.downloads/build-logs/target-files-package-20260713-232635-attempt7.log`.
+- Therefore the full product did **not** finish. The next session should preserve `out/` for incremental reuse, inspect host RAM/swap and the OOM record, then rerun with constrained Ninja parallelism rather than restarting an unconstrained build. Do not treat the Clang/Rust/Java output as proof of completion; success requires an exit-zero log and a target-files ZIP with size and SHA-256.
+
+## 2026-07-15 product-config JSON fix
+
+- A constrained `m -j8 target-files-package` retry reached 1,086/54,681 actions, then failed while merging `out/soong/soong.lineage_odessa.extra.variables`: `RecoveryPixelFormat` was emitted as invalid JSON `""RGBX_8888""`.
+- The source was the historical `TARGET_RECOVERY_PIXEL_FORMAT := "RGBX_8888"` assignment in `device/motorola/sm6150-common/BoardConfigCommon.mk`. Current Soong adds JSON quoting itself, so the assignment was corrected to the unquoted make value `RGBX_8888`.
+- Focused verification with `m -j8 product-config` completed successfully. The preceding AppFunctions missing-class diagnostic and Rust `tagged-globals` Clippy message were non-fatal warnings for this failure.
+- The full target-files build remains incomplete and should be resumed with `m -j8 target-files-package`, preserving `out/`.
+- The next full-build blocker was the legacy Motorola `libdisppower` module failing to compile because current `perfmgr/FlagProvider.h` includes generated `powerhal_flags.h`. The module now mirrors the current Pixel display-power dependency pattern by adding static dependencies on `powerhal_flags-aconfig-cc` and `libaconfig_storage_read_api_cc`.
+- Focused `m -j8 libdisppower` verification completed successfully for both arm64 and arm static/shared variants. The full target-files build still needs to resume.
+
+## 2026-07-15 build-property override migration
+
+- The resumed build failed generating the ODM `build.prop` because the historical Odessa product used legacy `PRODUCT_BUILD_PROP_OVERRIDES` keys `PRODUCT_NAME` and `PRIVATE_BUILD_DESC`, which Android 16's `gen_build_prop` rejects.
+- `device/motorola/odessa/lineage_odessa.mk` now uses the current schema keys `DeviceProduct`, `BuildDesc`, and `BuildFingerprint`, preserving the Android 11 Motorola identity values.
+- Focused generation of `out/soong/.intermediates/build/soong/odm-build.prop/android_common/build.prop` completed successfully. The generated ODM properties contain `ro.product.odm.name=odessa_retail`, `ro.product.odm.device=odessa`, and the intended stock fingerprint.
+- The full target-files build remains incomplete and should resume with `m -j8 target-files-package`, preserving `out/`.
+
+## 2026-07-16 pre-full-build review
+
+- A read-only review covered the Odessa device tree, SM6150 common tree, their cross-tree integration, and the selected kernel configuration/source. No device was contacted or flashed, and no Android project source was changed by the review.
+- Keep `device/motorola/sm6150-common` separate from `device/motorola/odessa`. It contains genuinely shared platform integration and explicit sibling-device behavior. Correct the current ownership leaks, especially the common vendor namespace's Odessa dependency, rather than merging the trees.
+- Immediate runtime blockers found: the selected AIDL lights HAL advertises a backlight with an empty callback and leaves every advertised light's type unset; the FPC fingerprint HAL executable has no SELinux executable label; fingerprint selector policy cannot create/update its persist selector files; and both fingerprint kernel nodes/drivers are enabled on the same GPIOs with duplicate exported notifier symbols.
+- The common configuration still advertises or starts removed/nonexistent functionality, including Wi-Fi Display, charge-only mode, old HIDL LiveDisplay, duplicate `time_daemon`, and several unowned init services. Its VINTF manifest must be reconciled against the actually shipped services before a full build can be considered valid.
+- The current vbmeta configuration uses AVB flags `3`, explicitly disabling verification and hashtrees. Treat this as temporary bring-up configuration pending bootloader-specific validation, not a release-ready security configuration.
+- The touchscreen DT overlays intentionally use Motorola-specific multi-string `status` properties and emit DTC warnings. Touch depends on stock bootloader DT mutation unless proven otherwise; do not enable both competing touch nodes blindly.
+- The uncommitted brace fix in `gps/android/utils/battery_listener.cpp` prevents `mHealth` from being dereferenced when null during unregister. The destructor still writes `mDone` outside its mutex, does not notify `mCond` before joining, and can call `join()` through a null `mThread` if Health HAL initialization failed.
+- HOST ONLY focused validation succeeded for `android.hardware.lights-service.odessa` and `android.hardware.gnss@2.1-service-qti` under the normal `lineage_odessa-bp4a-userdebug` lunch environment. All tracked XML in both device trees parsed with `xmllint`, and `git diff --check` passed for device, common, and kernel trees. No target-files ZIP exists; full VINTF, partition sizing, image packaging, AVB, and OTA checks remain unproven.
+
+## 2026-07-16 pre-full-build fixes
+
+- The review fixes were committed on the local `lineage-23.2` branches:
+  - Odessa device: `55aa52999c71c2ace5976768a33512d26e8fa73a`;
+  - SM6150 common device: `31eea31c91705d042af7d74b460e872aebbf4067`;
+  - SM6150 kernel: `92a96be148a072185131f60977af463c918b58cd`;
+  - SM6150 common vendor integration: `b20e28ee4cc1d7a54dc3f69689e72756fc8880e1`.
+- Keep the Odessa and SM6150 common device repositories separate. The common tree remains the owner of shared audio, radio, GNSS, display, boot-control, partition, init, and SELinux integration. Its extraction and generated vendor namespace no longer depend on `vendor/motorola/odessa`.
+- The AIDL lights HAL now reports correct type/ordinal metadata, implements backlight writes, scales framework brightness to the kernel's sysfs maximum, gives the service access to the backlight node, declares AIDL version 2, and preserves battery/notification LED handling.
+- The FPC HAL has the standard fingerprint executable label. The fingerprint selector can create and update only its labeled persist files, including truncating existing IDs. Egis and FPC now use one notifier implementation built into the kernel, eliminating duplicate exported symbols while retaining userspace selection of either sensor module.
+- The GNSS battery listener no longer uses a detached initializer. Health-HAL failure, callback unregister, condition-variable shutdown, service death, global teardown, and later reinitialization are synchronized and null-safe.
+- Removed unsupported or stale Wi-Fi Display declarations, WFD hidden-API entries/fixups, charge-only service/policy, old HIDL LiveDisplay source/manifest/policy, duplicate `time_daemon`, obsolete display post-processing triggers, missing automatically started services, and the missing Motorola autotest service. AOD is no longer exposed on the LCD, unverified sensor/CDMA/device-ID features are no longer declared, and NFC release logging is reduced.
+- Removed the global duplicate-rule and ELF-copy build escape hatches and the old firmware-mount make rules they concealed. Product configuration and policy generation pass without them.
+- AVB remains enabled, but vbmeta flags `3` were removed so new vbmeta output will no longer request disabled verification and hashtrees. Final AVB metadata still requires inspection from a completed product build before flashing.
+- Kernel fixes include the parallel-charger Kconfig ownership correction, FPC GPIO error handling, removal of the fingerprint notifier lifetime hazard, a narrower Android-only `sched_param` UAPI exclusion, and Odessa hardening for refcounts, dmesg restriction, forced module unloading, LoadPin availability, and Yama.
+- HOST ONLY verification passed for `product-config`, `android.hardware.lights-service.odessa`, `liblocbatterylistener` in both architectures, `android.hardware.gnss@2.1-service-qti`, and the complete `selinux_policy` target including neverallow/context tests. `bootimage` and `dtboimage` also completed after the kernel changes.
+- Resulting focused artifacts: `boot.img`, 67,108,864 bytes, SHA-256 `c904313b4ca4dbecea8ec50455913fdd485650eb9879d37a33101c0f5baa7406`; `dtbo.img`, 25,165,824 bytes, SHA-256 `7b76a363a0ff5ad8e1516fb05c3fde710be2962b51ff7fb6090d5e74edc9`.
+- A direct `check-vintf-all` request expanded to roughly 89,000 product actions and was stopped by the 10-minute tool timeout at about 5%; the displayed failures were cancelled actions after SIGTERM, not source diagnostics. Full VINTF, final vbmeta, partition sizing, target-files, and OTA checks therefore remain gated on the constrained full build.
+- Remaining hardware-dependent risks were deliberately not guessed away: Motorola's bootloader-specific touchscreen `status` tuples still emit DTC warnings and require DTBO/bootloader validation; actual Egis/FPC selection requires physical-device testing; Linux 4.14.190 remains legacy/EOL; charge-only behavior is not claimed; and no image is approved for flashing yet.
+- `manifests/odessa.xml` still pins the public historical baselines. Do not replace those revisions with unpublished local commit IDs under the public GitHub remotes; update the manifest after private/published remotes can fetch the new commits.
