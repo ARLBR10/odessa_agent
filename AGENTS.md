@@ -66,6 +66,18 @@ The Android source checkout will be large. Keep this small project repository fo
 - Do not use prebuilt objects to conceal source/build failures. If a proprietary component is required, identify its source build/firmware and extraction method.
 - Proprietary blobs may be tracked for reproducible builds; user-specific data and complete personal partition dumps must remain ignored.
 
+### Android project repositories
+
+The Odessa bring-up is maintained as five standalone Git repositories inside the ignored `lineageos/` checkout. Keep work on their local `lineage-23.2` branches and commit changes in the repository that owns the affected path:
+
+- `lineageos/device/motorola/odessa`: Odessa-specific product configuration, overlays, and SELinux policy.
+- `lineageos/device/motorola/sm6150-common`: configuration and source shared by Motorola SM6150-family devices.
+- `lineageos/kernel/motorola/sm6150`: the shared Linux kernel source.
+- `lineageos/vendor/motorola/odessa`: generated Odessa-specific proprietary files and vendor makefiles.
+- `lineageos/vendor/motorola/sm6150-common`: generated shared proprietary files and vendor makefiles.
+
+The outer project repository does not track these nested repositories because `lineageos/` is ignored. Record their immutable commit IDs in `manifests/odessa.xml` after private remotes are configured. Keep the two vendor repositories private unless redistribution has been reviewed. Their current payload must remain reproducible from the source and SHA-256 recorded in the device trees' `proprietary-files.txt`; never replace generic package files with personal partition dumps.
+
 ## Work plan
 
 Advance only when the exit criteria for the current phase are met. A later phase must not be used to conceal a failure in an earlier one.
