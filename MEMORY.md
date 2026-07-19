@@ -8,6 +8,7 @@ This file preserves durable facts and decisions from prior sessions. It is conte
 - Use the current LineageOS build guide as the workflow baseline, starting from the `tucana` build guide's “Preparing the build environment” flow: <https://wiki.lineageos.org/devices/tucana/build/variant1/#preparing-the-build-environment>.
 - Do not assume `tucana` device-specific commands, repositories, firmware, partition layout, or images apply to `odessa`; adapt the workflow using verified `odessa` data.
 - The agent is expected to create and maintain the required device-specific configuration, kernel integration, manifests, proprietary-file integration, and related bring-up code rather than asking the user to author C/C++ or Android device-tree code.
+- For long Android build commands, give the user a command that redirects routine output to a log and ask for the concise result. Do not run long builds in the main agent context; if autonomous execution is necessary, use a subagent.
 
 ## Known source leads
 
@@ -253,3 +254,121 @@ c9a0cf842bd4e4a90626f57413e14ce82f795c12461e4828253457b1468a2202  vbmeta.img
 - A direct `check-vintf-all` request expanded to roughly 89,000 product actions and was stopped by the 10-minute tool timeout at about 5%; the displayed failures were cancelled actions after SIGTERM, not source diagnostics. Full VINTF, final vbmeta, partition sizing, target-files, and OTA checks therefore remain gated on the constrained full build.
 - Remaining hardware-dependent risks were deliberately not guessed away: Motorola's bootloader-specific touchscreen `status` tuples still emit DTC warnings and require DTBO/bootloader validation; actual Egis/FPC selection requires physical-device testing; Linux 4.14.190 remains legacy/EOL; charge-only behavior is not claimed; and no image is approved for flashing yet.
 - `manifests/odessa.xml` still pins the public historical baselines. Do not replace those revisions with unpublished local commit IDs under the public GitHub remotes; update the manifest after private/published remotes can fetch the new commits.
+
+## 2026-07-16 power HAL Android 16 migration
+
+- The resumed full build reached 73% and failed because the SM6150 power-service sources include current `libperfmgr` headers, whose generated `powerhal_flags.h` was not exposed through the shared-library dependency.
+- `android.hardware.power-service.sm6150-libperfmgr` now directly links `powerhal_flags-aconfig-cc` and `libaconfig_storage_read_api_cc`, matching current Lineage/Pixel power-service consumers.
+- Compiling past that header exposed three additional API removals. The service now treats `HintManager::GetInstance()` as the non-owning singleton pointer returned by the current API; legacy hint-driven profile switching uses `GetAdpfProfileFromDoHint()` / `SetAdpfProfileFromDoHint()`; and the old early-boost timer was removed because current `AdpfConfig` has no early-boost fields and the device configuration supplied no corresponding settings. PID/uclamp control and stale-session handling remain.
+- HOST ONLY focused verification with `m -j8 android.hardware.power-service.sm6150-libperfmgr` completed successfully and installed the vendor power-service executable. The constrained full `target-files-package` build still needs to resume from the preserved output tree.
+
+## 2026-07-17 sccache build configuration
+
+- The host has `/usr/bin/sccache` version `0.16.0`.
+- For future LineageOS builds, use `sccache` instead of `ccache` while retaining `USE_CCACHE=1`, because the Android and Lineage build integrations use that variable to enable compiler wrappers.
+- Do not point `CCACHE_EXEC` directly at `sccache`: this branch's Soong sandbox invokes `CCACHE_EXEC -k cache_dir`, a `ccache` query that `sccache` 0.16.0 rejects.
+- Use an executable compatibility wrapper at `/home/arthu/bin/sccache-android`. It must print `${SCCACHE_DIR:-$HOME/.cache/sccache}` when invoked as `-k cache_dir` and otherwise run `exec /usr/bin/sccache "$@"`.
+- Build environment:
+  - `export USE_CCACHE=1`
+  - `export CCACHE_EXEC=/home/arthu/bin/sccache-android`
+  - `export SCCACHE_DIR="$HOME/.cache/sccache"`
+  - `export SCCACHE_CACHE_SIZE=50G`
+- Before a build, restart the server after setting those variables with `sccache --stop-server` and `sccache --start-server`. Use `sccache --zero-stats` before measurement and `sccache --show-stats` afterward.
+- `SCCACHE_CACHE_SIZE=50G` replaces `ccache -M 50G`. No equivalent of `ccache -o compression=true` is required because sccache handles cache compression internally.
+- Preserve the existing incremental `out/` tree and continue the constrained build with `lunch lineage_odessa-bp4a-userdebug` followed by `m -j8 target-files-package`.
+- The first sccache-enabled build failed immediately because `/home/arthu/.cache/sccache` had accidentally been created as an empty regular file. It was replaced with a directory and the server was restarted. A two-compile C smoke test then reported one miss followed by one hit, no cache errors, and a 50 GiB maximum, confirming the local cache works. The failed Android actions produced no source defect; rerun the same incremental build without cleaning `out/`.
+
+## 2026-07-17 transient Clang crash and USB storage reset
+
+- A constrained full build reported a Clang 21 optimizer segmentation fault while compiling the generated HIDL source `android.hardware.audio@7.0` `PrimaryDeviceAll.cpp`. This was not a C++ diagnostic or a reproducible source failure.
+- The host kernel log showed simultaneous USB UAS failures on workspace drive `/dev/sdb`: multiple read/write command aborts and xHCI bad-transfer events began at 18:09:18, followed by a successful USB device reset at 18:09:39. The build reported the Clang failure at 18:10:09. Treat the compiler crash as secondary to this storage transport incident unless it recurs without USB errors.
+- `/dev/sdb1` is the Btrfs workspace filesystem. After the reset, Btrfs device counters reported zero read, write, flush, corruption, and generation errors. No new USB, Btrfs, OOM, machine-check, or memory errors appeared during focused verification.
+- HOST ONLY verification with `m -j1 android.hardware.audio@7.0` rebuilt the exact failing `PrimaryDeviceAll.cpp` arm64 target and completed all 1,992 module actions successfully in 7:07. No source workaround or Clang bug report is warranted from this incident.
+- Before another long build, stabilize the external SSD connection (direct port and known-good cable/enclosure where possible). Preserve `out/`; after the physical connection is reliable, resume the incremental `m -j8 target-files-package` build rather than cleaning or patching the audio interface.
+
+## 2026-07-18 obsolete Qualcomm wifilearner removal
+
+- The constrained full build reached the vendor init-copy stage and rejected `vendor.qti.hardware.wifi.wifilearner@1.0-service.rc`: its lazy-service `IWifiStats` interface was unknown because the proprietary interface library is only a prebuilt and no source `hidl_interface` target exists.
+- Current LineageOS Qualcomm common trees remove this obsolete extension rather than weakening `host_init_verifier` or deleting only the lazy-start declaration. The SM6150 common proprietary list now omits `wifilearner`, its init script, and `vendor.qti.hardware.wifi.wifilearner@1.0.so`; the matching VINTF HAL declaration was also removed.
+- Regeneration from the verified TequilaOS payload removed all three files and their generated `Android.bp`/vendor-make entries. No `wifilearner` reference remains in `vendor/motorola/sm6150-common`; XML validation and `git diff --check` pass.
+- The resumed `m -j8 target-files-package` run recognized the deleted init glob and no longer reported the original verifier error. During mandatory Soong graph regeneration it exposed an independent platform failure: the arm64 `libzygote` rlib reports multiple outputs from its shared dependency `libseccomp_policy` at `system/zygote/zygote/Android.bp:95`. Do not reintroduce wifilearner to investigate this next blocker.
+
+## 2026-07-18 Widevine crypto compatibility fix
+
+- The Android 14 TequilaOS `vendor/lib64/libwvhidl.so` imports `CBS_init` from its original `libcrypto.so`, but Android 16's BoringSSL no longer exports that symbol. This caused Soong's strict ELF check to fail even though `libcrypto` was declared.
+- The common extraction script now reproducibly adds `libcrypto_shim.so` to the blob's ELF `DT_NEEDED` list. LineageOS's existing vendor-capable `hardware/lineage/compat:libcrypto_shim` implements the required `CBS_init` ABI; the original `libcrypto.so` dependency remains intact.
+- Regeneration from the verified TequilaOS payload patched the proprietary blob and generated `libcrypto_shim` as a Soong shared dependency. No `allow_undefined_symbols` escape hatch was added.
+- HOST ONLY focused verification with `m -j8 libwvhidl` completed successfully, including the exact `libwvhidl check elf file` action, and installed both vendor libraries. The constrained full `target-files-package` build still needs to resume from the preserved output tree.
+
+## 2026-07-18 completed target-files and validation
+
+- The full HOST ONLY `m -j8 target-files-package` build completed and produced `lineageos/out/target/product/odessa/obj/PACKAGING/target_files_intermediates/lineage_odessa-target_files.zip`.
+- Initial post-build VINTF validation found `android.hardware.boot@1.1::IBootControl/default` declared both in the common device manifest and the branch-current boot service's own VINTF fragment. The obsolete declaration was removed from `device/motorola/sm6150-common/manifest.xml`, and the user completed a new target-files build.
+- Corrected archive: 2,614,118,513 bytes, SHA-256 `df57ff2dd125159a34bcf27a345306a993ba738621ebc50144fe40d7d2f34527`, modified 2026-07-18 14:02:54 -0300. `unzip -tq` reported no compressed-data errors.
+- A standalone non-verbose `check_target_files_vintf` invocation appeared to exit zero after the duplicate boot HAL was fixed, but this was not sufficient proof of compatibility. The OTA generator's verbose internal check, which passes the fully populated target `BuildInfo`, definitively returned `INCOMPATIBLE`: kernel FCM level was unspecified and numerous proprietary/device HALs were absent from the assembled framework compatibility matrices. The duplicate boot HAL error itself is gone.
+- `avbtool verify_image` successfully verified the RSA-4096 vbmeta signature plus boot, DTBO, recovery, product, system, and vendor descriptors/hashtrees. Vbmeta flags are `0`; this remains a test-key `userdebug` artifact, not a release-signed image.
+- The dynamic partition group is 4,864,868,352 bytes per slot. Product, system, and vendor consume 4,589,371,392 bytes including AVB metadata, leaving 275,496,960 bytes (about 263 MiB), or 5.67% headroom. This fits but should be monitored.
+- The user subsequently completed the HOST ONLY `m -j8 ota_from_target_files` host-tool build. Direct OTA generation stopped before payload creation at the mandatory VINTF gate; no installable OTA ZIP was generated and compatibility checks were not bypassed.
+- The pending source fix adds `<kernel target-level="4"/>` to the common device manifest and includes LineageOS's existing Motorola, Qualcomm, and legacy Qualcomm device-framework matrices through `DEVICE_FRAMEWORK_COMPATIBILITY_MATRIX_FILE`. XML validation and `git diff --check` pass. A new target-files archive must be generated and its OTA VINTF gate rerun to prove that these standard matrices cover every declared HAL.
+- No image is approved for flashing yet. Phase 0 still lacks a trusted current exact-variant stock restore package/procedure, complete non-sensitive partition inventory, verified fastbootd/recovery behavior, and the TequilaOS hardware baseline matrix.
+
+## 2026-07-18 transient Rust LLVM crash
+
+- After the VINTF source fixes, the user's incremental target-files rebuild reached 95% and Rust 1.88's LLVM 20.1 optimizer crashed with SIGSEGV/general-protection fault while producing `libandroid_runtime`'s generated Rust static library. This was an internal ThinLTO optimizer crash, not a Rust source diagnostic.
+- Host kernel logs at 15:04:16 contain the matching `libLLVM.so.20.1` general-protection fault but no USB/UAS, Btrfs, OOM, or machine-check event. Btrfs `/dev/sdb1` read/write/flush/corruption/generation counters remain zero. The host currently has ample RAM and zram swap.
+- Treat this as transient unless the exact action reproduces. First retry only `m -j1 libandroid_runtime` without cleaning or changing Rust stack/LTO settings; if that succeeds, resume `m -j8 target-files-package`. If it reproduces, preserve the crash and investigate compiler/hardware stability before adding a workaround.
+
+## 2026-07-18 FCM 6 follow-up
+
+- The focused `m -j1 libandroid_runtime` retry succeeded, confirming the Rust LLVM crash was transient. The user's subsequent incremental `m -j8 target-files-package` build also completed.
+- Regenerated target-files archive: 2,614,132,019 bytes, SHA-256 `08095785266b97b4fbf3349a92a0ae495140ab2316941cd89f386a2884db735f`, modified 2026-07-18 17:24:59 -0300; ZIP integrity passed.
+- OTA generation again stopped at mandatory VINTF validation. Including the standard Motorola/Qualcomm matrices reduced the missing-HAL list from dozens to only `android.hardware.configstore@1.1::ISurfaceFlingerConfigs/default`, `android.hardware.memtrack@1.0::IMemtrack/default`, and `motorola.hardware.health@1.0::IMotHealth/default`.
+- Current Android 16 VINTF rejects kernel FCM 4 with Linux 4.14: the first allowed FCM for 4.14 is 6. A branch-current LineageOS 23.2 Xiaomi SM6150 reference also uses device manifest target level 6.
+- Pending source fixes set both Odessa/common device manifest fragments and the kernel declaration to target FCM 6. A new common `framework_compatibility_matrix.xml` contains only the three remaining optional HAL instances and is included alongside the standard Motorola, Qualcomm, and legacy Qualcomm matrices. All changed XML parses and `git diff --check` passes.
+- No OTA ZIP was produced and no compatibility check was bypassed. Regenerate target-files once more, then rerun OTA generation to prove FCM compatibility.
+
+## 2026-07-18 Android 16 kernel minimum blocker
+
+- The user regenerated target-files after the FCM 6 and supplemental-matrix changes. Archive: 2,614,137,705 bytes, SHA-256 `d67ea5d5f2e5712f569d0cd4c56d5aa279da4421597ad9cda8d110eea441842a`, modified 2026-07-18 17:38:15 -0300; ZIP integrity passed.
+- OTA VINTF validation now accepts all device/framework HAL declarations. The sole remaining incompatibility is the kernel patch level: FCM 6 requires Linux 4.14.336 or newer, while the selected kernel is 4.14.190. No OTA ZIP was generated.
+- Do not fake `SUBLEVEL`, remove kernel metadata, downgrade FCM, or skip compatibility checks. Android 16 requires a real stable-kernel update with the corresponding fixes.
+- The public `motorola-sm6150-devs/kernel_motorola_sm6150` `lineage-20` branch reaches 4.14.326 and shares historical merge bases with this kernel, but its current tree differs by roughly 9,030 files; it is not safe to merge or replace wholesale without review. It is still ten stable releases below the minimum.
+- The next engineering phase is a reviewed Motorola kernel stable update to at least 4.14.336, preferably the final maintained 4.14 LTS level if compatible, followed by kernel build, boot/DTBO rebuild, VINTF, and full hardware regression testing. This is a real target-branch blocker, not another packaging-only fix.
+
+## 2026-07-18 Linux 4.14.336 and FCM 6 completion
+
+- Kernel repository `kernel/motorola/sm6150` was genuinely updated from Linux 4.14.190 to final upstream Android-common 4.14.336. Merge commit `70f404ff7c1fb97460cef91e1f89d594a2959358` has parents local Motorola head `92a96be148a072185131f60977af463c918b58cd` and Android-common `014241ad77dda0eafbdf671d5b8e86917d8ec97e` (merge base `d2d05bcf4b4edf8d028fa420dee3c6644aa5b4ac`).
+- The merge preserved Odessa/Motorola behavior while fixing reviewed semantic conflicts in USB gadget/networking, FFS, Qualcomm early-random/event-timer code, ARM64 CPU errata, and LPFC. The resulting kernel identifies as `4.14.336-perf+`; no KernelSU/SUSFS integration is present.
+- FCM 6 configuration requirements were enabled in `vendor/odessa_defconfig`. Hidden `CONFIG_TRACE_GPU_MEM` is legitimately selected by the enabled Qualcomm KGSL driver rather than forced as a dummy setting.
+- `CONFIG_HAVE_MOVE_PMD` and `CONFIG_HAVE_MOVE_PUD` are backed by the reviewed LineageOS 4.14 fast-`mremap` implementation and its extent/rmap correctness fixes, not fake capability flags. Provenance is the sequence used by `LineageOS/android_kernel_xiaomi_sm6125`: `c03090c08306`, `55aa9440e322`, `9c675f67ada9`, `7e84645f282f`, `994df5b67cca`, `52fe5a2c9c5c`, and `f54ef1f06039`.
+- Motorola's experimental `CONFIG_SPECULATIVE_PAGE_FAULT` was disabled because fast PMD/PUD subtree moves otherwise retain a known use-after-free race. Other final FCM settings include binderfs, always-on BPF JIT, userfaultfd, software TTBR0 PAN, fs-verity signatures, static usermodehelper disablement, ext4 POSIX ACLs, and `CONFIG_RT_GROUP_SCHED=n`.
+- The post-merge FCM/mremap/config delta is currently uncommitted in six kernel files: `arch/Kconfig`, `arch/arm64/Kconfig`, `arch/arm64/configs/vendor/odessa_defconfig`, `arch/arm64/include/asm/pgtable.h`, `drivers/gpu/msm/Kconfig`, and `mm/mremap.c`. `git diff --check` passes.
+- Final HOST ONLY target-files archive: `lineageos/out/target/product/odessa/obj/PACKAGING/target_files_intermediates/lineage_odessa-target_files.zip`, 2,615,265,928 bytes, SHA-256 `6f80655466ccbd7cf9193bce23fb0b253b665760be3be304be27033c4b6f0f72`; ZIP integrity passes.
+- Standalone verbose `check_target_files_vintf` definitively returns `COMPATIBLE` for kernel FCM 6 with Linux `4.14.336-perf+`. No compatibility check was bypassed.
+- Final test-key A/B OTA: `lineageos/out/target/product/odessa/lineage-23.2-20260719-UNOFFICIAL-odessa.zip`, 1,028,374,656 bytes, SHA-256 `65d3a91433e470899f79c75386e771bd6d84b3d4cde28f0a06a7d0dd23280dee`; ZIP integrity and payload metadata checks pass. It is an unofficial `userdebug` development artifact signed with Android test keys, not a release artifact.
+- Final boot artifact SHA-256 is `b3778bfeaa72aced813a9b04bda1878ab1c31c1e7447752e468a993432667737`; final DTBO SHA-256 is `be2e144cc4578577d1ae73ce28b924c302652b2ba7bd2d2e4d0495cbf9ff98e6`.
+- No phone was contacted, booted, sideloaded, or flashed. The OTA is not approved for flashing: Phase 0 recovery gaps remain, and the new kernel/mremap/config behavior still requires physical-device validation across boot, storage/encryption, suspend, charging, USB, radio, Wi-Fi/Bluetooth, display/touch, audio, camera, fingerprint, sensors, recovery, and both A/B update slots.
+
+## 2026-07-18 source checkpoint and Phase 0 inventory
+
+- The previously uncommitted Android 16 compatibility work is now committed on local `lineage-23.2` branches: Odessa device `23809aa`; SM6150 common device `101bf343` and `ade40c34`; SM6150 kernel `98efff6a92e3` and `b9df0469a7a2` after merge `70f404ff7c1f`; SM6150 common vendor `73b5933`.
+- No rebuild was performed because the validated artifacts were built from the exact source bytes that were subsequently committed. Existing hashes and ZIP integrity were rechecked, and verbose `check_target_files_vintf` again returned `COMPATIBLE` for Linux `4.14.336-perf+` and FCM 6.
+- Read-only Android inventory reconfirmed `odessa`, `XT2087-1`, slot `_a`, A/B layout, dynamic partitions, file-based encryption, current bootloader/baseband, and the TequilaOS build. `/dev/block/by-name` and unprivileged `lpdump` provided the physical-name map and complete logical `super` layout without reading partition contents.
+- Bootloader fastboot reconfirmed product `odessa`, slot `a`, two slots, `super` size 9,730,785,280 bytes, `is-userspace: no`, and `securestate: flashing_unlocked`. Motorola does not implement generic `getvar unlocked` on this bootloader.
+- Fastbootd was verified with `is-userspace: yes`; logical `system_a`, `vendor_a`, and `product_a` were visible with sizes matching `lpdump`.
+- The installed custom recovery booted and exposed ADB after its Enable ADB menu action. It reports the Android 11 Motorola vendor fingerprint `RPAS31.Q2-59-17-4-5-5`, display ID `TQ3A.230901.001`, and kernel `4.14.190-perf+`, but no Lineage Recovery/TWRP/OrangeFox version property. It returned successfully to TequilaOS and `sys.boot_completed=1`.
+- No flash, erase, format, wipe, install, sideload, raw block read/write, or LineageOS boot occurred. The phone remained on TequilaOS.
+- Phase 0 still requires the user-operated official Motorola Software Fix **Download-only** checkpoint on trusted Windows and completion of the physical TequilaOS hardware baseline. Software Fix must not run Rescue during package acquisition; Rescue is destructive and factory-resets the phone.
+- Tracked details are in `docs/build-checkpoint-20260718.md`, `docs/phase-0-checkpoint.md`, `docs/phase-0-inventory.md`, and `docs/tequilaos-hardware-baseline.md`.
+
+## 2026-07-19 official Android 11 firmware AVB validation
+
+- HOST ONLY validation completed for `downloads/ODESSA_RETAIL_RPAS31.Q2_59_17_4_3_9_subsidy_DEFAULT_regulatory_DEFAULT_CFC.xml`; no phone command or source change was made. All 19 package payload MD5 values match `flashfile.xml`.
+- Focused host `lpunpack` and `lpdump` targets built successfully. The nine sparse chunks reconstructed to a 9,730,785,280-byte raw `super`, SHA-256 `3701414cd149639d6e66089cee83ce20f5245797b63c71b3fd6e25513f82609e`.
+- Both A/B metadata views are identical: liblp metadata 10.0, three metadata copies, no flags, 4,861,198,336-byte groups, populated `_a` product/system/vendor, a small `_b` system, and empty `_b` product/vendor.
+- `avbtool verify_image --image vbmeta.img` verified the embedded SHA256/RSA-2048 signature, SHA-256 hashes for boot/DTBO/recovery, and SHA-256 hashtrees for extracted product/system/vendor. Flags are 0; rollback index is 16; public-key SHA-1 is `fd29248b78aa9d6427e8f569eda90be62b9fa0ee`.
+- The package `super` size exactly matches the phone. Its populated `_a` logical sizes exactly match the phone's current `_b` sizes; current slot A and group-A sizing differ after later updates/custom ROM use. The package bootloader is dated 2022-08-18 and baseband matches the phone, but installed recovery identifies later Motorola build `...-4-5-5` and the running vendor patch is newer.
+- Large generated reconstruction/extraction files were removed after verification; the downloaded package and host tool build outputs remain. Full commands, metadata, hashes, AVB descriptors, comparison, and cleanup are recorded in `docs/firmware-validation-rpas31-4-3-9.md`.
+- Motorola Software Fix automatically identified the connected phone and selected this exact package; the user did not select a model/package manually, and no IMEI or serial was recorded. This establishes exact-device official provenance.
+- The package is accepted as the stock recovery route: bootloader `...-220818` is newer than the phone's `...-220629`, baseband matches exactly, physical `super` size and A/B/liblp structure match, all manifest hashes pass, and complete AVB verification passes. Use only Motorola Software Fix Rescue if restoration becomes necessary; do not improvise a manual fastboot script or preemptively flash it.
+- The destructive fallback procedure, prerequisites, expected result, and failure handling are documented in `docs/stock-restore-rpas31-4-3-9.md`. Phase 0's stock-package/restore-path blocker is resolved; remaining Phase 0 work is completion of the TequilaOS hardware baseline.
