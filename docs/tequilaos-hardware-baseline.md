@@ -14,8 +14,8 @@ Record results on the currently installed ROM before replacing it. Use `PASS`, `
 | Storage | File-based encryption reported active | PASS | Verified by read-only properties on 2026-07-12 |
 | Slots | Active slot and A/B state reported correctly | PASS | `_a` active during 2026-07-12 inventory |
 | Cellular | SIM detected | PASS | User-confirmed on TequilaOS |
-| Cellular | Incoming and outgoing voice calls | UNTESTED | Use a normal test number; do not place an emergency call |
-| Cellular | Incoming and outgoing SMS | UNTESTED | |
+| Cellular | Incoming and outgoing voice calls | PARTIAL | A normal call worked; incoming and outgoing directions were not separately recorded |
+| Cellular | Incoming and outgoing SMS | PARTIAL | SMS works; send and receive directions were not separately recorded |
 | Cellular | Mobile data | PASS | User-confirmed on TequilaOS |
 | Cellular | Airplane mode restores service afterward | UNTESTED | |
 | Cellular | VoLTE/IMS registration | UNTESTED | Record carrier and observed state only |
@@ -30,9 +30,9 @@ Record results on the currently installed ROM before replacing it. Use `PASS`, `
 | USB | ADB authorization and reconnect | PASS | Authorized ADB worked before and after mode changes |
 | USB | File transfer/MTP | UNTESTED | |
 | USB | USB tethering | UNTESTED | |
-| Audio | Earpiece | UNTESTED | |
+| Audio | Earpiece | PASS | User-confirmed during a normal call |
 | Audio | Loudspeaker | PASS | User-confirmed on TequilaOS |
-| Audio | Main microphone | UNTESTED | |
+| Audio | Main microphone | PASS | User-confirmed directly and during a normal call |
 | Audio | Secondary/noise-cancel microphone | UNTESTED | |
 | Audio | Wired or USB audio | UNTESTED | |
 | Haptics | Vibration and notification feedback | PASS | User-confirmed on TequilaOS |
