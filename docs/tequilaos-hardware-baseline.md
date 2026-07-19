@@ -21,9 +21,9 @@ Record results on the currently installed ROM before replacing it. Use `PASS`, `
 | Cellular | VoLTE/IMS registration | UNTESTED | Record carrier and observed state only |
 | Wi-Fi | 2.4 GHz association and Internet | PASS | User-confirmed on TequilaOS |
 | Wi-Fi | 5 GHz association and Internet | PASS | User-confirmed on TequilaOS |
-| Wi-Fi | Hotspot with a client device | UNTESTED | |
-| Bluetooth | Pairing and reconnect | UNTESTED | |
-| Bluetooth | Media audio | UNTESTED | |
+| Wi-Fi | Hotspot with a client device | PASS | User-confirmed on TequilaOS |
+| Bluetooth | Pairing and reconnect | PASS | User-confirmed on TequilaOS |
+| Bluetooth | Media audio | PASS | User-confirmed on TequilaOS |
 | Bluetooth | Call audio and microphone | UNTESTED | |
 | NFC | Tag detection/payment-app NFC availability | PASS | Tag detection user-confirmed; payment behavior not tested |
 | USB | Charging | PASS | Verified while connected this session |
@@ -40,8 +40,8 @@ Record results on the currently installed ROM before replacing it. Use `PASS`, `
 | Camera | Other rear camera IDs and modes | FAIL | User reports only one rear camera worked |
 | Camera | Front photo/video | PASS | User-confirmed on TequilaOS |
 | Camera | Third-party Camera2 application | UNTESTED | |
-| Location | GNSS cold fix | UNTESTED | |
-| Location | GNSS warm fix | UNTESTED | |
+| Location | GNSS cold fix | UNTESTED | GPS navigation works, but cold-fix timing was not measured |
+| Location | GNSS warm fix | PASS | GPS navigation obtained a working location; detailed fix timing not measured |
 | Biometrics | Fingerprint enroll/unlock/reboot persistence | PASS | Unlock and persistence across reboot user-confirmed |
 | Sensors | Proximity during call | UNTESTED | |
 | Sensors | Ambient light/adaptive brightness | UNTESTED | |
