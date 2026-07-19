@@ -17,7 +17,7 @@ Re-query these values before any future device-changing operation. Do not rely o
 
 ## Official stock recovery package
 
-Status: **blocked on a user-operated Windows checkpoint**.
+Status: **complete**. Motorola Software Fix automatically identified the connected phone and downloaded `RPAS31.Q2-59-17-4-3-9`. All payload hashes and AVB hashes/hashtrees verify; see `docs/firmware-validation-rpas31-4-3-9.md` and `docs/stock-restore-rpas31-4-3-9.md`.
 
 Motorola's current official Software Fix application is Windows-only. It reads the phone identity in fastboot mode and selects the matching firmware using the device IMEI. The IMEI must remain private and must not be pasted into project logs, commits, chat, or screenshots.
 
@@ -37,7 +37,7 @@ Acquisition checkpoint:
 6. Record the displayed package/build, channel, bootloader, and baseband without recording the IMEI or serial number.
 7. Make the downloaded and unpacked package available under the ignored `.local/` area for host-side inspection and SHA-256 recording.
 
-The package is acceptable only if it is selected by the official tool for this exact phone and is not older than the installed low-level firmware. The existing Android 10 `QPA30.19-Q3-32-50` package is too old and remains prohibited for flashing.
+The accepted package was selected automatically by the official tool for this exact phone. Its bootloader is newer than the currently installed bootloader, its baseband matches exactly, and its physical/dynamic layout matches the device. The existing Android 10 `QPA30.19-Q3-32-50` package is too old and remains prohibited for flashing.
 
 Motorola states that an actual Rescue operation factory-resets the phone and removes personal data. We are not performing Rescue during package acquisition.
 
