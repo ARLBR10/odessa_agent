@@ -131,3 +131,53 @@ The change is committed locally in that repository and exported to
 `patches/hardware-qcom-bootctrl/` in this project so it cannot be lost. Before
 this is considered done it must be forked to the user's remote and pinned in
 `manifests/odessa.xml`, the same way the kernel fork is handled.
+
+## Trap: the same logic exists twice, and only one copy is compiled
+
+The first fix was applied to `hardware/qcom-caf/bootctrl/boot_control.cpp` and
+had **no effect on hardware**. Two installs were burned before this was caught.
+
+That repository contains two copies of the same boot-control implementation:
+
+| File | Built by | In this product's build graph |
+| --- | --- | --- |
+| `boot_control.cpp` | legacy HIDL `bootctrl_hal_defaults` module | **no** |
+| `1.1/libboot_control_qti/libboot_control_qti.cpp` | `libboot_control_qti_defaults`, used by both `android.hardware.boot-service.qti` binaries | **yes** |
+
+Proof from the generated build graph:
+
+```
+recovery service objects        : BootControl.o  libboot_control_qti.o  main.o
+libboot_control_qti.cpp in ninja: 24 references
+bootctrl/boot_control.cpp       :  0 references
+```
+
+Both files are now fixed, but only the second one matters for this product.
+
+### How the wasted cycles were misdiagnosed
+
+The running recovery was initially blamed, on the basis that
+`ro.build.version.incremental` on the phone read `1784920145` while
+`out/build_date.txt` had been refreshed to `1784930461`. That reasoning was
+wrong: the rebuilt `recovery.img` also carries `ro.build.date.utc=1784920145`
+internally, so the property never distinguished old from new. Do not use build
+timestamps to identify which recovery is running.
+
+### Reliable verification instead
+
+Compare the hash of the boot-control service actually running on the phone with
+the one inside the image about to be flashed:
+
+```bash
+# expected, from the image on the host
+unpack recovery.img, then:
+sha256sum system/bin/hw/android.hardware.boot-service.qti.recovery
+
+# actual, from the phone in recovery
+adb shell sha256sum /system/bin/hw/android.hardware.boot-service.qti.recovery
+```
+
+They must match before an install result means anything. For the build that
+contained only the dead-code fix this hash was
+`e79b61a8080011a8bb8960d2cdaa5215be55eb3b1117883ae01c3fbc68ce7c25`; a build
+containing the real fix must differ from it.

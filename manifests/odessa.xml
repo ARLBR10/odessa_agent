@@ -33,5 +33,5 @@
   <project path="hardware/qcom-caf/bootctrl"
            name="ARLBR10/android_hardware_qcom_bootctrl"
            remote="github"
-           revision="5d92d9f0e1d531adc3ad63efc219bf4abde2d09f" />
+           revision="6863795de5ec856c98244b1e5c3a4cd1f1b9be1c" />
 </manifest>
