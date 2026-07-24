@@ -2,3 +2,17 @@ Motorola_Moto_G9_Plus_XT2087-1_ODESSA_RETAIL_QPA30.19-Q3-32-50_LATAM
 lineageos
 .local/
 downloads/
+
+# Raw device captures. Keep local; they can contain device identifiers and are
+# summarized in docs/ instead.
+recovery*.log
+gpt-before/
+gpt-after/
+gpt-*.txt
+
+# Stock firmware package and the third-party Windows flashing helper. Untrusted
+# distributor binaries; never commit or execute them.
+Flashfile-XML-to-Batch-Script-for-Windows/
+
+# Stray build detritus
+*.o
