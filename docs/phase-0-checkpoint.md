@@ -1,6 +1,6 @@
 # Phase 0 Recovery Checkpoint
 
-No LineageOS image is approved for flashing until every required item below is complete.
+Phase 0 is complete with the baseline limitations documented below. This checkpoint does not by itself approve a LineageOS image for flashing; first-install artifact, procedure, and rollback checks remain required.
 
 ## Verified identity
 
@@ -104,12 +104,16 @@ Procedure goals:
 
 ## Exit criteria
 
+Status: **complete** on 2026-07-19.
+
 Phase 0 is complete only when:
 
 - The official exact-device stock package is downloaded, inspected, checksummed, and accepted as current enough.
 - Written stock restore steps have been derived from that exact package and reviewed without executing them.
 - The non-sensitive partition inventory is complete.
 - Fastbootd and recovery behavior are verified.
-- The TequilaOS baseline matrix in `docs/tequilaos-hardware-baseline.md` is complete.
+- The TequilaOS baseline matrix in `docs/tequilaos-hardware-baseline.md` records the available results and explicitly distinguishes validated passes, historical `LIKELY` behavior, known failures, and untested behavior.
 
-Until then, the generated LineageOS OTA remains a host-validated development artifact, not an installation candidate.
+The user could not repeat the telephony checkpoint before moving on. Incoming/outgoing calls, incoming/outgoing SMS, airplane-mode recovery, Bluetooth call audio/microphone, and call proximity are therefore recorded as `LIKELY`, not `PASS`. Other unavailable tests remain `UNTESTED`. These limitations must carry into LineageOS regression testing.
+
+The generated LineageOS OTA remains a host-validated development artifact until the first-install artifact, procedure, and rollback checks approve a controlled device test.

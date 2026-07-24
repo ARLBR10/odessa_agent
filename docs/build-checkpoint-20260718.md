@@ -22,6 +22,7 @@ These commits currently exist only in local repositories. `manifests/odessa.xml`
 | `lineage-23.2-20260719-UNOFFICIAL-odessa.zip` | 1,028,374,656 | `65d3a91433e470899f79c75386e771bd6d84b3d4cde28f0a06a7d0dd23280dee` |
 | `boot.img` | 67,108,864 | `b3778bfeaa72aced813a9b04bda1878ab1c31c1e7447752e468a993432667737` |
 | `dtbo.img` | 25,165,824 | `be2e144cc4578577d1ae73ce28b924c302652b2ba7bd2d2e4d0495cbf9ff98e6` |
+| `recovery.img` | 67,108,864 | `dd4e3350ac92278b42a7db13bbc2f778898a923b09ab48b6d1368886272c2d26` |
 
 Both ZIP files pass `unzip -tq`. Verbose `check_target_files_vintf` returns `COMPATIBLE` for Linux `4.14.336-perf+` at FCM 6.
 
@@ -31,4 +32,4 @@ No rebuild was required after committing. The successful artifacts were generate
 
 A future clean rebuild is still required for release reproducibility after the local commits are available from pinned remotes. It is not a prerequisite for completing Phase 0 or the first controlled hardware validation.
 
-This is a test-key `userdebug` build. It is not release-signed and is not approved for flashing while Phase 0 remains incomplete.
+This is a test-key `userdebug` build. Phase 0 is complete with documented baseline limitations, but the build is not release-signed and remains unapproved for flashing until `docs/first-install-checkpoint.md` closes the firmware-slot and immediate preflight gates.
