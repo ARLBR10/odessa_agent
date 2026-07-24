@@ -21,4 +21,17 @@
            name="LineageOS/android_hardware_motorola"
            remote="github"
            revision="ffd5182343fb63227308f0f8b268358e3bd2a3b6" />
+
+  <!-- Fork of the QTI boot control HAL. Upstream update_slot_attribute()
+       marks the target slot's xbl, xbl_config, multiimgoem and multiimgqti
+       unbootable on UFS and never clears them, which leaves this device
+       unbootable after an otherwise successful A/B install. See
+       docs/xbl-unbootable-root-cause-20260724.md. Forked from LineageOS
+       846dfb0 so the fix survives repo sync and the build stays
+       reproducible. -->
+  <remove-project name="LineageOS/android_hardware_qcom_bootctrl" />
+  <project path="hardware/qcom-caf/bootctrl"
+           name="ARLBR10/android_hardware_qcom_bootctrl"
+           remote="github"
+           revision="5d92d9f0e1d531adc3ad63efc219bf4abde2d09f" />
 </manifest>
