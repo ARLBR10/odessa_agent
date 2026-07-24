@@ -1,0 +1,96 @@
+From 5d92d9f0e1d531adc3ad63efc219bf4abde2d09f Mon Sep 17 00:00:00 2001
+From: ARLBR10 <claudezinbolado@gmail.com>
+Date: Fri, 24 Jul 2026 18:30:02 -0300
+Subject: [PATCH] bootctrl: Don't mark UFS boot-LUN partitions unbootable
+
+set_active_boot_slot() skips xbl, xbl_config, multiimgoem and multiimgqti
+on UFS devices because slot selection for those is done by switching the
+UFS boot LUN, not by GPT attributes. update_slot_attribute() had no such
+exclusion.
+
+update_engine calls setSlotAsUnbootable(target) at the start of an
+install, which reaches update_slot_attribute(ATTR_UNBOOTABLE) and marks
+every partition of the target slot unbootable, including xbl. At the end
+of the install setActiveBootSlot(target) activates the slot but skips
+those four partitions, so the unbootable bit is never cleared.
+
+The result on Motorola odessa is that a fully successful install leaves
+the device pointed at a slot whose XBL is flagged unbootable while the
+other slot's XBL is still flagged active. The bootloader rejects it with
+"No valid operating system could be found" and drops to a degraded
+one-slot view with no enumerable partition map, requiring a full stock
+GPT reflash to recover.
+
+Measured on hardware by capturing and diffing the GPT immediately before
+and after an install: no GPT corruption, all CRCs valid, only attribute
+bytes changed, with xbl_b and xbl_config_b going 0x00 -> 0x80 while every
+other slot B partition went 0x00 -> 0x3f.
+
+Factor the exclusion into one predicate used by both call sites so they
+cannot drift apart again.
+
+Change-Id: I4a348fb816e9b9bec682ad9ab1809b958ed51550
+---
+ boot_control.cpp | 25 +++++++++++++++++++++----
+ 1 file changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/boot_control.cpp b/boot_control.cpp
+index 7f68b57..4aa7703 100644
+--- a/boot_control.cpp
++++ b/boot_control.cpp
+@@ -147,6 +147,21 @@ enum part_stat_result_type stat_block_device(const char *dev_path)
+ 	return PARTITION_FOUND;
+ }
+ 
++//On UFS devices xbl, xbl_config, multiimgoem and multiimgqti are not selected
++//by GPT slot attributes at all. The bootloader picks them from the UFS boot
++//LUN, which gpt_utils_set_xbl_boot_partition() switches separately. Their
++//attribute bits must therefore be left untouched by every attribute update,
++//not just by set_active_boot_slot(). Marking them unbootable strands the
++//target slot: the bootloader is told to boot a slot whose XBL is flagged
++//unbootable, and refuses.
++static bool ptn_selected_by_ufs_boot_lun(const char *ptn)
++{
++	return !strcmp(ptn, PTN_XBL) ||
++		!strcmp(ptn, PTN_XBL_CFG) ||
++		!strcmp(ptn, PTN_MULTIIMGOEM) ||
++		!strcmp(ptn, PTN_MULTIIMGQTI);
++}
++
+ //Set a particular attribute for all the partitions in a
+ //slot
+ static int update_slot_attribute(const char *slot,
+@@ -162,6 +177,7 @@ static int update_slot_attribute(const char *slot,
+ 	char partName[MAX_GPT_NAME_SIZE + 1] = {0};
+ 	const char ptn_list[][MAX_GPT_NAME_SIZE] = { AB_PTN_LIST };
+ 	int slot_name_valid = 0;
++	int is_ufs = gpt_utils_is_ufs_device();
+ 	if (!slot) {
+ 		ALOGE("%s: Invalid argument", __func__);
+ 		return -1;
+@@ -177,6 +193,10 @@ static int update_slot_attribute(const char *slot,
+ 		return -1;
+ 	}
+ 	for (i=0; i < ARRAY_SIZE(ptn_list); i++) {
++		//Slot selection for these is done through the UFS boot LUN, so
++		//their GPT attributes must not be modified.
++		if (is_ufs && ptn_selected_by_ufs_boot_lun(ptn_list[i]))
++			continue;
+ 		memset(buf, '\0', sizeof(buf));
+ 		//Check if A/B versions of this ptn exist
+ 		snprintf(buf, sizeof(buf) - 1,
+@@ -626,10 +646,7 @@ int set_active_boot_slot(struct boot_control_module *module, unsigned slot)
+ 	for (i = 0; i < ARRAY_SIZE(ptn_list); i++) {
+ 		//XBL, XBL_CFG, MULTIIMGOEM, MULTIIMGQTI are handled differrently
+                //for ufs devices so ignore them.
+-		if (is_ufs && (!strcmp(ptn_list[i],PTN_XBL)
+-		    || !strcmp(ptn_list[i],PTN_XBL_CFG)
+-                    || !strcmp(ptn_list[i],PTN_MULTIIMGOEM)
+-                    || !strcmp(ptn_list[i],PTN_MULTIIMGQTI)))
++		if (is_ufs && ptn_selected_by_ufs_boot_lun(ptn_list[i]))
+ 				continue;
+ 		//The partition list will be the list of partitions
+ 		//corresponding to the slot being set active
+-- 
+2.55.0
+

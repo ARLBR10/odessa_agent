@@ -570,6 +570,15 @@ c9a0cf842bd4e4a90626f57413e14ce82f795c12461e4828253457b1468a2202  vbmeta.img
 - The boundary changes are not credible pre-Recovery causes: an unrelated IPQ8074 DTS sleep-clock value; Qualcomm `smp2p`/`smsm` DT-node reference balancing; compiled-out MSM serial support (`CONFIG_SERIAL_MSM=n`); PSI trigger lifetime code that runs only after userspace interacts with PSI; and trace behavior requiring trace setup absent from the recovery command line.
 - Therefore no minimal `.283` fix or test image was created. Reverting a boundary change would be unrelated or simply recreate `.282`, invalidating the test. The earlier early-RNG theory is disproved for this exact `.282` to `.283` boundary because the affected code is identical. Future investigation must first explain the discrepancy between the claimed `.282` visual pass and the reproducible `.283` fail, including candidate construction/packaging or a repeated `.282` test with full artifact/slot verification, before attempting an arbitrary kernel fix.
 
+## 2026-07-24 Btrfs ghost directory entry blocked a full build
+
+- A full `m` build failed in the `PhotopickerLib` javac action: the rule's initial `rm -rf` could not remove a stale `srcjars` tree. Root cause was a corrupted Btrfs directory entry created 2026-07-23 22:47: readdir returned `dagger/hilt/processor/internal/definecomponent/codegej`, but lookup/unlink of both `codegej` and the presumed original `codegen` fail with ENOENT (`d?????????` in `ls`). The mangled name differs from `codegen` by one bit (`n`=0x6E → `j`=0x6A, bit 0x04 flipped).
+- Btrfs device stats on `/dev/sdb1` are all zero (no read/write/flush/corruption/generation errors) and the current boot has no USB/UAS/xhci errors, so the filesystem never detected a checksum failure: the corruption was most likely introduced in host RAM before the metadata was written and checksummed, not by the USB transport.
+- This is the third transient-corruption signal on this host: 2026-07-17 Clang SIGSEGV (initially blamed on a USB UAS reset), 2026-07-18 Rust LLVM SIGSEGV, and now a single-bit-flipped dirent. The evening of 2026-07-23 also shows four overlapping journald boot records (19:59, 20:04, 20:46, 20:54), suggesting hard crashes or clock anomalies. Treat host RAM/PSU/thermal stability as suspect until a memtest86+ run passes; do not trust long unattended builds to be reproducible until then.
+- Fix applied (HOST ONLY): the corrupt tree was renamed to `.../PhotopickerLib/android_common_apex31/javac/srcjars.corrupt-20260724`, unblocking the build; no source defect existed. The ghost entry cannot be deleted online (unlink and rmdir both fail); removal requires offline `btrfs check` after unmounting, or it can simply be left harmlessly renamed until maintenance.
+- Pending user-run diagnostics (need sudo): `sync && sudo sysctl -w vm.drop_caches=3` then re-read the corpse dir (if the ghost vanishes, corruption was RAM-only and the disk copy is fine; if it persists, the on-disk metadata is corrupt and needs offline `btrfs check`), `sudo btrfs scrub start /mnt/lineageos_drive`, and an overnight memtest86+.
+- The build had not completed; resume incrementally with the usual constrained command (`lunch lineage_odessa-bp4a-userdebug`, sccache env, `m -j8 target-files-package`) preserving `out/`.
+
 ## 2026-07-22 4.14.282 USB gadget diagnostic results
 
 - The exact 4.14.282 candidate reaches the Lineage Recovery UI but exposes no host USB device after Recovery's Enable ADB action. The host sees neither ADB, fastboot, nor any Motorola USB enumeration, so this is below `adbd` and not a host authorization or protocol-handshake issue.
@@ -800,3 +809,88 @@ The failure lands after (1) payload fully written and verified on the target slo
 - The Android.mk RFS rule removal does **not** remove runtime RFS symlinks: `hardware/qcom-caf/common` installs the child links via Soong `install_symlink`; verified present in `out/target/product/odessa/vendor/rfs/msm/adsp/` (`hlos`, `ramdumps`, `readonly`, `readwrite`, `shared`). No modem-side follow-up is owed for that change.
 - Full Android boot on the merged `4.14.336-perf+` kernel (recovery boot proven, Android not yet) remains the next hardware milestone after a successful install; pstore/ramoops capture plan from earlier entries applies.
 - Device state before any retest: re-verify identity, slot metadata, and fallback with bootloader fastboot first; the phone was last known in the post-failed-install inconsistent state, and the user restores it via the documented Software Fix path.
+
+## 2026-07-24 successful OTA install, ABL boot rejection, and AVB vbmeta flags
+
+Full detail: `docs/avb-vbmeta-flags-boot-failure-20260724.md`.
+
+### The A/B install pipeline is now proven on hardware
+
+- The user wiped, sideloaded `lineage-23.2-20260724-UNOFFICIAL-odessa.zip` (1,028,460,442 bytes, SHA-256 `4e4944d0f69480e47b46fffcb7e645a4654e4553e04bd63709116802c89f428a`) from Lineage Recovery on slot B, and pulled `/tmp/recovery.log` before rebooting.
+- The log shows `Using AIDL version of IBootControl`, `source_slot: B` / `target_slot: A`, dynamic-partition metadata created and copied, `boot_a`/`dtbo_a`/`recovery_a`/`vbmeta_a` hash-verified, `DownloadAction`/`FilesystemVerifierAction`/`PostinstallRunnerAction` all `ErrorCode::kSuccess`, `Update successfully applied`, and `Install completed with status 0`.
+- There is no `SetActiveBootSlot` error line; update_engine logs that call only on failure, so slot activation succeeded.
+- This supersedes the open failure in "2026-07-24 OTA slot-activation failure and UFS BSG fix" and "2026-07-24 install failure root cause: UFS BSG vs sg boot-LUN transport". The AIDL BootControl migration and `QTI_GPT_UTILS.USE_BSG_FRAMEWORK := false` are validated. Do not reopen them.
+- The untracked project-root `recovery.log` is the captured artifact. It contains device identifiers; never commit or share it unredacted.
+
+### Firmware slot asymmetry is eliminated as a cause
+
+- The user flashed the official `RPAS31.Q2-59-17-4-3-9` package with explicit `_b` suffixes for `bootloader`, `radio`, `bluetooth`, `dsp`, and `logo`; slot B then booted stock Android 11. The following OTA targeted slot A, which also held freshly flashed stock firmware, and failed identically.
+- Current, self-consistent low-level firmware on the target slot does not change the symptom. The `docs/first-install-checkpoint.md` firmware-synchronization gate is answered by experiment: it was not the blocker. `copy-partitions` remains prohibited.
+
+### Motorola MBM slot-suffix quirk
+
+- Unsuffixed `fastboot flash <partition>` from Motorola AP Fastboot Flash Mode wrote to `_a` partitions even with slot B active. Both stock `flashfile.xml` and `servicefile.xml` use only unsuffixed names, so a stock restore refreshes one slot only, and not necessarily the selected one. Always use explicit suffixes when a specific slot matters, and re-verify.
+
+### Actual failure and leading root cause
+
+- After the successful install and slot switch, the bootloader reports `No valid operating system could be found` with `OS Fingerprint: N/A`, immediately, with no boot animation and no repeated attempt. The fingerprint is an AVB property descriptor inside `vbmeta`, so ABL rejected the slot before reading it.
+- HOST ONLY `avbtool info_image` comparison: stock `RPAS31` vbmeta uses the Motorola key `fd29248b78aa9d6427e8f569eda90be62b9fa0ee`, SHA256_RSA2048, flags 0, rollback index 16. Tequila/Pixys, proven to boot Android on this phone, uses the AOSP test key `2597c218aae470a130f61162feaae70afd97f011`, SHA256_RSA4096, **flags 3**, rollback index 0. The failing LineageOS build uses the same AOSP test key, SHA256_RSA4096, **flags 0**, rollback index 0.
+- The signing key is therefore not the discriminator; the vbmeta flags field is. Flags 3 is `VERIFICATION_DISABLED | HASHTREE_DISABLED`.
+- `device/motorola/sm6150-common` commit `31eea31c` (2026-07-16, "Remove stale legacy integration") deleted `BOARD_AVB_MAKE_VBMETA_IMAGE_ARGS += --flags 3`. That line is upstream LineageOS configuration for this platform, added by the LineageOS Motorola SM6150 maintainer in `8db0b6129ceb90f100aedcdd59f2a51816ea0d30` ("Simplify AVB flag logic"). Every hardware install attempt after `31eea31c` failed this way.
+- Unresolved counter-evidence: flags-0 test-key vbmeta images did boot Lineage Recovery repeatedly (verified `Flags: 0` on `diagnostic-recovery-4.14.310-boot-test-20260723` and `diagnostic-recovery-4.14.190-20260719`). This bootloader tolerates a verification-enabled custom-key vbmeta on the recovery path but apparently not on normal boot; the mechanism is not proven, and the rollback index 0 against a stored 16 may contribute. Treat the flags restoration as the leading hypothesis, not a proven cause, until a flags-3 build boots.
+
+### Change applied and security consequence
+
+- `device/motorola/sm6150-common/BoardConfigCommon.mk` restores `BOARD_AVB_MAKE_VBMETA_IMAGE_ARGS += --flags 3` with an explanatory comment. Uncommitted pending a hardware result.
+- This is a real reduction relative to stock and must be carried into Phase 8 as an explicit documented limitation. Do not describe the result as verified boot, and do not extend the precedent to SELinux permissive, disabled encryption, or disabled update verification.
+
+### Verified device state
+
+- Read-only bootloader queries after the user's stock restore: `product: odessa`, `securestate: flashing_unlocked`, `secure: yes`, `is-userspace: no`, `slot-count: 2`, `current-slot: a`, full physical partition map enumerable (`boot_a/b`, `recovery_a/b`, `dtbo_a/b`, `xbl_a/b`, `modem_a/b`, unslotted `super` 0x244000000), `slot-unbootable:a/b: no`, `slot-retry-count:a: 7`, `slot-retry-count:b: 0`, `slot-successful:b: no`, bootloader `MBM-3.0-odessa_retail-e69c40c38d6-22...`. This is a healthy view, unlike the earlier `slot-count: 1` near-brick state.
+- Querying `slot-successful:a` reset the USB fastboot session once; the device re-enumerated on its own. Treat that variable as unreliable on this bootloader.
+
+### Next steps
+
+- The user runs the rebuild (their shell has the consistent sccache configuration). Verify the regenerated vbmeta reports `Flags: 3` before flashing.
+- Keep a stock bootable fallback slot; slot B currently holds full stock firmware and booted Android 11.
+- Always capture `/tmp/recovery.log` before rebooting after a sideload; it is what made this diagnosis possible.
+- If boot still fails, read `/sys/fs/pstore/` from Lineage Recovery after the failed attempt to separate an ABL-stage rejection from a kernel-stage failure.
+
+## 2026-07-24 vbmeta flags disproven; UFS boot LUN / GPT slot mismatch found
+
+Full detail: `docs/boot-lun-slot-mismatch-20260724.md` and the result section of `docs/avb-vbmeta-flags-boot-failure-20260724.md`.
+
+- The AVB flags hypothesis is **disproven**. The rebuild's vbmeta reports `Flags: 3` with the AOSP test key, matching the Tequila/Pixys configuration exactly; `lineage-23.2-20260724-FLAGSFIX-UNOFFICIAL-odessa.zip` again installed with `Install completed with status 0` and the boot failure was unchanged. `BOARD_AVB_MAKE_VBMETA_IMAGE_ARGS += --flags 3` is kept because it matches upstream LineageOS sm6150-common, not because it fixed anything.
+- First inspection of the phone in the **post-failure state** before any restore. `fastboot getvar all` reported `current-slot: a` but `running-boot-lun: 2`, plus `running-bl-slot: unknown/_a`, `slot-count: 1`, all slot metadata `unknown`, and empty `partition-size` for `boot_a`, `boot_b`, and `super`. `logical-block-size` is `0x1000`.
+- In QTI `gpt-utils`, `BOOT_LUN_A_ID` is 1 and `BOOT_LUN_B_ID` is 2. The GPT attributes therefore point at slot A while the SoC still boots XBL from slot B. MBM detects the split boot chain, degrades to a one-slot view, and stops enumerating partitions. **This degraded view is the recurring near-brick state**, and it is why a full `gpt.bin` plus stock reflash is needed to recover.
+- `set_active_boot_slot()` rewrites GPT attributes first and only then switches the boot LUN, returning -1 if the switch fails. `update_engine` logged no error, so the code believed the switch succeeded while the bootloader shows it did not. The two steps are not atomic, so any step-3 failure leaves this exact state.
+- Eliminated on the host with the exact sources and built binaries: BSG-versus-sg transport (sg is compiled in; the recovery boot service contains `UFS query ioctl failed` and `scsi_generic` strings and no `ufs-bsg` strings); the `_GENERIC_KERNEL_HEADERS` silent-no-op branch in `recovery-ufs-bsg.cpp` (that macro appears zero times in the generated ninja, though it remains a trap if build flags change); `is_ufs` being false (`ro.boot.bootdevice=1d84000.ufshc` is present in the recovery log); and kernel support (`ufshcd_ioctl` handles `UFS_IOCTL_QUERY`, and `ufshcd_query_ioctl` accepts `WRITE_ATTR` for `QUERY_ATTR_IDN_BOOT_LU_EN`).
+- **Correction:** the 2026-07-24 "UFS BSG vs sg boot-LUN transport" entry concluded that compiling the sg transport would fix slot activation. It did not. Its diagnosis that BSG is unusable on this kernel stands; its conclusion that this was the whole install failure does not. Likewise, slot activation is not "validated" — only the return value is.
+- **Open gap:** no healthy-state baseline exists for `running-boot-lun` and `running-bl-slot`. Capture `fastboot getvar all` on a restored, booting stock slot-A device before any further code change. Expected if the diagnosis holds: `running-boot-lun: 1`, `running-bl-slot: _a/_a`, `slot-count: 2`.
+- This 4.14 tree exposes no UFS sysfs attribute for the boot LUN. Reading it at runtime needs a small `READ_ATTR` helper, which the kernel does support.
+- Do not re-run an OTA install until the boot LUN switch is proven or replaced; each attempt reproduces the split boot chain and forces a full stock reflash. Manual `fastboot set_active` remains prohibited and was not attempted.
+
+## 2026-07-24 CORRECTION: boot LUN is not the failure; MBM cannot read the GPT
+
+- The healthy-state baseline was captured on a restored, booting stock device and confirmed directly: `current-slot: a`, `running-bl-slot: _a/_a`, **`running-boot-lun: 2`**, `slot-count: 2`, all partitions enumerable, `logical-block-size: 0x1000`.
+- **`running-boot-lun: 2` is the normal value on this device for slot A.** It is identical in the healthy and failed states. The "UFS boot LUN / GPT slot mismatch" conclusion recorded earlier the same day is **wrong** and is corrected in place at the top of `docs/boot-lun-slot-mismatch-20260724.md`. `set_boot_lun()` is not proven broken.
+- The failure signature reduces to exactly one fact: after a successful OTA install, MBM can no longer read the partition table. `running-bl-slot` degrades to `unknown/_a`, `slot-count` drops to 1, and `partition-size` for `boot_a`, `boot_b`, and `super` returns empty. Everything else follows from that, including why recovery requires reflashing `gpt.bin`.
+- Still standing and independently verified: the install is complete and correct with all target partitions hash-verified and status 0; slot activation returns success; and the eliminations of BSG-versus-sg, the `_GENERIC_KERNEL_HEADERS` no-op branch, `is_ufs`, kernel `WRITE_ATTR` support, AVB flags, and firmware slot asymmetry.
+- Remaining suspect, **not** a conclusion: `boot_ctl_set_active_slot_for_partitions()` → `gpt_disk_commit()`, which rewrites all four GPT structures (primary header, primary entry array, secondary header, secondary entry array) on every call. An offset or size error there would corrupt both copies at once. The code reads the block size via `BLKSSZGET` rather than assuming 512, but correctness of every offset for 4 KiB logical blocks is unverified.
+- Three confident root causes have now been wrong in one session (firmware asymmetry, AVB flags, boot LUN). Do not record another without a measurement.
+- Planned measurement, pending user approval: build AOSP `bootctl` (`system/extras/bootctl`), flash Lineage Recovery to both slots with explicit suffixes, capture the GPT read-only from recovery ADB, run `bootctl set-active-boot-slot` alone with no OTA, recapture, and diff on the host. This keeps bootable stock on slot A throughout and isolates the single suspect operation.
+
+## 2026-07-24 ROOT CAUSE PROVEN: slot activation marks the target slot's XBL unbootable
+
+Full detail: `docs/xbl-unbootable-root-cause-20260724.md`. This supersedes every earlier root-cause claim for "No valid operating system could be found".
+
+- Method: `tools/capture-gpt.sh` run from Lineage Recovery immediately before the sideload and again immediately after `Install completed with status 0`, without rebooting; decoded and diffed on the host with `tools/decode-gpt.py`. Install ran source slot A, target slot B.
+- **The GPT is not corrupted.** All primary and backup header CRCs and entry-array CRCs are valid on every LUN, and no partition name or LBA range changed. Only attribute bytes changed.
+- Partition-to-LUN map on this device: `sdc` = `xbl_a`/`xbl_config_a`; `sdd` = `xbl_b`/`xbl_config_b`; `sde` = slot A boot/recovery/dtbo/vbmeta/modem/firmware; `sdf` = slot B equivalents; `sdb` = `super` + `userdata`; `sda` = small misc.
+- Decisive diff: `xbl_b`, `xbl_config_b`, `multiimgoem_b`, and `multiimgqti_b` went `0x00` to **`0x80` unbootable**, while every other slot-B partition went `0x00` to `0x3f` active. Slot A deactivated correctly (`0x44` to `0x40`), and `xbl_a` stayed `0x44 active,successful`.
+- Cause: `boot_control.cpp` has two attribute writers and only one excludes the UFS boot-LUN partitions. `set_active_boot_slot()` skips `xbl`, `xbl_config`, `multiimgoem`, `multiimgqti` when `gpt_utils_is_ufs_device()`; `update_slot_attribute()` did not. `update_engine` calls `setSlotAsUnbootable(target)` at install start (log line `Marking new slot as unbootable`), which marks every target partition unbootable including `xbl`; `setActiveBootSlot(target)` then skips those four, so the unbootable bit is never cleared.
+- This explains the immediate failure with no boot animation, `OS Fingerprint: N/A`, why reflashing `gpt.bin` recovers, why firmware sync / AVB flags / boot LUN were all irrelevant, why `fastboot set_active` slot switches always worked (MBM implements that itself), and why the earlier BSG `-2` failure also bricked the phone.
+- Fix committed as `5d92d9f` in `hardware/qcom-caf/bootctrl` (base `846dfb0`): `update_slot_attribute()` now applies the same exclusion, factored into one shared `ptn_selected_by_ufs_boot_lun()` predicate used by both call sites.
+- **Residual uncertainty:** the fix leaves `xbl_b` at `0x00` and `xbl_a` at `0x44` because the code now never touches either, matching the upstream premise that the boot LUN selects them. It is not proven that MBM agrees; if it also needs the active bit moved, a further swap is required. `0x80` on the activating slot is wrong under any reading, and this is the minimal upstream-consistent change. The next install will show, and the GPT capture makes it observable.
+- **Repository placement problem:** `hardware/qcom-caf/bootctrl` is an upstream LineageOS repo, not one of the five tracked repos and not pinned in `manifests/odessa.xml`, so `repo sync` would discard the fix. It is exported to `patches/hardware-qcom-bootctrl/` as a stopgap. Fork it to the project remote and pin it, as was done for the kernel, before treating the build as reproducible.
+- New tooling, validated against a real GPT before use: `tools/capture-gpt.sh` (READ ONLY on-device capture of GPT metadata only) and `tools/decode-gpt.py` (host-side decode/diff with CRC validation and A/B attribute decoding). Known gap: `sdb` was skipped by the capture loop and its `-b` guard; harmless here since `super`/`userdata` are not slotted, but worth fixing.
