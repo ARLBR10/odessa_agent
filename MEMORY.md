@@ -924,3 +924,713 @@ Start here: `docs/handoff-20260724-evening.md`.
 - Fork pushed: `ARLBR10/android_hardware_qcom_bootctrl` branch `lineage-23.2` at `6863795de5ec856c98244b1e5c3a4cd1f1b9be1c`, pinned in `manifests/odessa.xml` with a `<remove-project>` for the upstream entry.
 - Disproven by hardware experiment, do not revisit: firmware slot asymmetry, AVB vbmeta flags, UFS boot LUN mismatch, GPT corruption, BSG-versus-sg transport, `_GENERIC_KERNEL_HEADERS`, `is_ufs`, kernel `WRITE_ATTR` support.
 - Next unexplored evidence if the XBL-swap hypothesis fails: read `/sys/fs/pstore/` from recovery after a failed boot. Nothing yet rules out the simpler possibility that this ROM has never booted Android on this hardware — recovery boot is proven, Android boot is not.
+
+## 2026-07-24 night: degraded state measured; booting `xbl_b` is the failure
+
+Full detail: `docs/xbl-boot-lun-degraded-state-20260724.md`.
+
+- The post-failed-install "semi-brick" was queried read-only with `fastboot getvar`. ABL is alive and correct (`MBM-3.0-odessa_retail-e69c40c38d6-220818`, the RPAS31 bootloader) but enumerates **zero partitions**: every `partition-size:` query returns empty, including `boot`, `super`, `gpt`, `partition`, and even `xbl`/`xbl_a`/`xbl_b`. `has-slot:boot: no`, `slot-suffixes: not found`, `slot-count: 1`, and all slot metadata `unknown`. `Invalid partition name boot_a` is a symptom of that, not a suffix problem. The Rescue still works because `flashfile.xml` uses only unsuffixed names.
+- **`running-boot-lun` is resolved and is not an anomaly.** It reports the UFS LUN index: 2 = `sdc` = `xbl_a`, 3 = `sdd` = `xbl_b`. Healthy stock on slot A reads 2; the failed slot-B state reads 3. Close the "unexplained mismatch" open question from `docs/handoff-20260724-evening.md`.
+- Therefore `set_boot_lun()` **works**. The install really moved the SoC's XBL source to `xbl_b`. It is not silently failing.
+- **Why every slot-B test passed and every OTA failed:** all kernel/recovery slot-B tests used `fastboot set_active b`, which MBM implements itself and which flips GPT attributes only, leaving the boot LUN at 2 — so they kept booting the known-good `xbl_a`. The A/B OTA path is the only thing that has ever called `gpt_utils_set_xbl_boot_partition()` and moved the SoC onto `xbl_b`. **Booting from `xbl_b` is the failure.**
+- The XBL-unbootable fix (`ARLBR10/android_hardware_qcom_bootctrl` `6863795d`) is still a real, hardware-confirmed bug fix. It was not this bug. Do not revert it.
+- `bootloader.img` is a `SINGLE_N_LONELY` container whose recipe flashes fourteen **unsuffixed** partitions: `cmnlib cmnlib64 keymaster hyp tz devcfg storsec uefisecapp prov aop abl qupfw xbl_config xbl`. With the Motorola unsuffixed-writes-to-`_a` quirk, **every stock restore in this project refreshed slot A's low-level firmware and never slot B's.** The 2026-07-19 comparison already found `xbl`/`xbl_config` differing between slots.
+- Two candidates remain, separable by a free read-only measurement: **(A)** `xbl_b`/`xbl_config_b` content is stale or bad; **(B)** switching the boot LUN at all is wrong on this device, since MBM's own `set_active` never does it and LineageOS OTAs never update `xbl`.
+- Next-session sequence: restore stock; confirm `current-slot: a`, `running-boot-lun: 2`, `slot-count: 2`; flash Lineage Recovery unsuffixed; from recovery root ADB hash the fourteen firmware partitions on both slots. If `xbl`/`xbl_config` differ, flash `bootloader_b` from the RPAS31 package and rerun the OTA (no rebuild). If they are identical, make `gpt_utils_set_xbl_boot_partition()` a no-op and let the `xbl` pair follow GPT attributes, then rebuild recovery and flash it before the install.
+
+### Host findings the same night (HOST ONLY)
+
+- The LineageOS `boot.img` and `vbmeta.img` are structurally equivalent to the known-booting Tequila configuration: boot header v2, 4096-byte pages, embedded dtb, AOSP test key `2597c218aae470a130f61162feaae70afd97f011`, SHA256_RSA4096, flags 3, rollback index 0. There is no boot-image-format or AVB-composition blocker.
+- **The `GPTFIX` OTA zip is not internally the fixed build.** Its embedded `system/bin/hw/android.hardware.boot-service.qti.recovery` hashes to `e79b61a8080011a8bb8960d2cdaa5215be55eb3b1117883ae01c3fbc68ce7c25`, the recorded dead-code hash. The real fix (`1e55e8fce77e70a0b7048700ce5b23ffd24cc13d571b7ac234280f4948c91584`) exists only in `out/target/product/odessa/recovery.img`, built after the zip was sealed. The hardware result stands because that recovery was flashed separately, but the installed ROM carries an unfixed vendor boot-control HAL. Regenerate the OTA from the fixed tree before any real A/B update.
+- `multiimgoem_*` and `multiimgqti_*` live on `sde`/`sdf`, the ordinary slot LUNs — not on the boot LUNs `sdc`/`sdd`. Upstream's `ptn_selected_by_ufs_boot_lun()` predicate therefore over-applies to them, and the fix now pins `multiimgoem_b`/`multiimgqti_b` at `0x00` permanently. Their contents are identical across slots (2026-07-19), so this is probably benign, but narrow the predicate to `xbl`/`xbl_config` on the next rebuild.
+- A self-consistent, AVB-verified image set was extracted from the exact `GPTFIX` target-files into ignored `lineageos/.downloads/gptfix-images/` (no rebuild needed): `boot.img` `6c687d09...c631`, `dtbo.img` `8d807087...7293`, `vbmeta.img` `cd2b4dae...c716`, `recovery.img` `9716e188...32f3`, and `super.img` `e3cbcbb0...4daf` (2,601,933,248 bytes sparse, built with `build_super_image.py`). Every vbmeta hash descriptor matches its image footer.
+- Raw `fastboot getvar all` output contains the USB serial, `uid`, `battid`, and `pcb-part-no`. It was kept in the session scratchpad only; never commit it.
+
+## 2026-07-25 ROOT CAUSE FOUND AND FIXED: the XBL pair is selected by GPT attributes, not the boot LUN
+
+This supersedes every earlier root-cause claim for "No valid operating system could be found" and for the recurring near-brick. Proven by measuring the bootloader's own behaviour, twice.
+
+### The measurement that settled it
+
+- `fastboot set_active b` (MBM's own slot switch) was captured with `tools/capture-gpt.sh`. MBM sets **all 24 A/B partitions**, including `xbl_b`, `xbl_config_b`, `multiimgoem_b`, `multiimgqti_b`, to `0x04 active`, and clears the `_a` copies to `0x00`. It leaves `bBootLunEn` alone: `running-boot-lun` stayed 2.
+- Independently confirmed on the failure path: after the LineageOS boot failed its retries, ABL performed a full fallback to slot A **and flipped `xbl_a`/`multiimgoem_a` back to `0x04 active` itself**.
+- Therefore upstream QTI's premise — that on UFS these four partitions are selected by the boot LUN and their GPT attributes are irrelevant — is **false on this device**. Skipping them left twenty partitions pointing at one slot and four at the other; MBM saw a split boot chain and refused to enumerate the partition table at all (`slot-count: 1`, every `partition-size` empty, `has-slot:boot: no`). That degraded bootloader, not GPT damage, was the "nuked partition table" all along.
+- The encoding is **not** the issue: QTI-style `0x3f`/`0x3a` on `boot_a`/`boot_b` coexisted with a perfectly healthy MBM.
+
+### Fix (five files, gated behind one soong config bool)
+
+`XBL_SLOT_BY_GPT_ATTRIBUTES` = "this device selects the XBL chain by GPT attributes, like its bootloader actually does":
+
+- `hardware/qcom-caf/bootctrl/1.1/libboot_control_qti/libboot_control_qti.cpp` and `boot_control.cpp`: `ptn_selected_by_ufs_boot_lun()` returns false under the flag, so xbl/xbl_config/multiimgoem/multiimgqti follow the normal A/B attribute flow in both `update_slot_attribute()` and `set_active_boot_slot()`.
+- `hardware/qcom-caf/bootctrl/gpt-utils/gpt-utils.cpp`: `gpt_utils_set_xbl_boot_partition()` is a no-op under the flag; `bBootLunEn` is never touched.
+- `.../1.1/libboot_control_qti/Android.bp` and `.../gpt-utils/Android.bp`: `-DXBL_SLOT_BY_GPT_ATTRIBUTES` via `select()`, with the **`default:` arm preserving upstream behaviour** so an unset variable cannot silently enable the quirk.
+- `device/motorola/sm6150-common/common.mk`: `$(call soong_config_set_bool,QTI_GPT_UTILS,XBL_SLOT_BY_GPT_ATTRIBUTES,true)`.
+
+Uncommitted as of this entry. The bootctrl fork pin in `manifests/odessa.xml` must be updated after the commit is pushed.
+
+### Result on hardware
+
+- The bootloader now **accepts and boots the activated slot**, with `OS Fingerprint` populated. The red "No valid operating system could be found" screen is gone.
+- A failed boot now degrades **gracefully**: ABL retries, marks `boot_b` `0x80 unbootable`, and falls back to slot A. No degraded bootloader, no `gpt.bin` reflash, no Rescue. The near-brick failure mode is eliminated.
+- Every prior "root cause" is now explained as a symptom of this one: the original `0x80`-on-xbl_b bug, the later "leave them untouched" fix that also failed, why `fastboot set_active` always worked (MBM does it correctly), and why firmware sync, AVB flags, and the boot LUN were all irrelevant.
+
+### Boot-LUN question closed
+
+`running-boot-lun` reports the UFS LUN index: 2 = `sdc` = `xbl_a`, 3 = `sdd` = `xbl_b`. Healthy stock on slot A reads 2. A build that switched the boot LUN to 3 still produced the degraded bootloader even with `xbl_b` byte-identical to `xbl_a`, so the LUN switch was disproven as the cause; the no-op is kept because MBM never touches it either.
+
+### Recovery shortcut discovered
+
+From the degraded state, `fastboot flash bootloader bootloader.img` (unsuffixed, from the official RPAS31 package) restores `running-boot-lun` and the partition view. A full Software Fix Rescue is not required. In the degraded state only **unsuffixed** partition names are accepted, because ABL reports `has-slot:boot: no`.
+
+## 2026-07-25 NEXT PROBLEM: LineageOS bootloops after the bootloader accepts it
+
+- Observed sequence: black screen, Motorola logo, bootloader-unlocked warning, Motorola logo held for **10-15 seconds**, then reset. No LineageOS boot animation.
+- The second logo is the continuous-splash framebuffer inherited from ABL, so the kernel is running for those 10-15 seconds and dies before `bootanimation`. This is the first time in the project that Android boot has progressed past the bootloader.
+- `CONFIG_PANIC_TIMEOUT=5` matches the timing: a panic a few seconds in, plus a 5-second delay before reset. `CONFIG_PANIC_ON_SSR_NOTIF_TIMEOUT=y` is also set and is a plausible trigger for a fresh port.
+- Kernel has `CONFIG_PSTORE=y`, `PSTORE_RAM`, `PSTORE_CONSOLE`, `PSTORE_PMSG`. The `sdmmagpie-moto-common-overlay.dtsi` reserves `ramoops_mem` with `console-size`, plus `mmi_annotate_mem`, `wdog_cpuctx_mem`, and `tzlog_dump_mem`. A `kpan` partition exists at `sdb11`.
+- **`/sys/fs/pstore/` was empty after the first bootloop.** The cause was a 15-second Power-key force-off, which cold-resets DRAM and clears the ramoops region. `kpan` was also empty.
+- **Durable rule: never force the phone off with the Power key when a kernel log is wanted.** Catch the reset by holding **Volume Down** so it lands in the bootloader on a warm path, then select Recovery and read `/sys/fs/pstore/`.
+- The boot ramdisk's `fstab.qcom` was reviewed on the host and looks correct: logical `system`/`vendor`/`product` with `slotselect`+`first_stage_mount`, `metadata` and `userdata` entries, firmware mounts for `modem`/`dsp`/`bluetooth`/`fsg`, and the `misc` entry update_engine requires.
+
+## 2026-07-25 bootloop diagnosis: dies at the zygote handoff, no kernel panic
+
+First successful capture of a failed Android boot on this device. Artifact: ignored `lineageos/.downloads/pmsg-bootloop-20260725.bin` (120,589 bytes, from `/sys/fs/pstore/pmsg-ramoops-0`). Contains device identifiers; never commit or share unredacted. Host parser: scratchpad `pmsg.py` (pstore pmsg format: `pmsg_log_header_t` magic `0x6c`, then `android_log_header_t`, then priority/tag/msg).
+
+### How the capture was finally obtained
+
+- Warm path only: let the boot actually fail, catch the reset with **Volume Down** into the bootloader, then select Recovery. **Any power-off clears the ramoops DRAM region** - two captures were lost that way, one to a deliberate 15-second Power hold and one to an accidental power-off.
+- Going bootloader -> Recovery *without* letting a boot fail leaves pstore empty; the boot must actually run.
+- `dmesg-ramoops-0` was **absent** (no kernel panic) and `console-ramoops-0` was **absent** too, so init's own log was not recoverable. Only pmsg survived, with roughly 28% single-bit corruption (`ramoops ... ecc: 0/0`, no ECC configured). Treat ramoops as unreliable across a reset on this device.
+
+### What the log proves
+
+- The boot reaches the **end of `post-fs-data`**, far deeper than expected: `apexd` ran, `vold` generated the "key storage" and standard storage keys, `fscrypt_prepare_user_storage` succeeded, `vold_prepare_subdirs` set up `/data/misc_ce/apexdata/...` and `/data/misc/profiles/cur/0`, `keystore2` reached `maintenance.rs:287 - await a change to 'apexd.status'`, and `odsign`/`odrefresh` completed with "Boot images on /system OK" and "on-device signing done". **FBE and metadata encryption work.**
+- **Zero log lines from `zygote`, `system_server`, `servicemanager`, `bootanim`, `installd`, `statsd`.** The 120 KB buffer never wrapped in its 256 KB zone, so this is the complete userspace log - those processes genuinely never logged.
+- `zygote` is armed as critical: `init.zygote64.rc` has `critical window=${zygote.critical_window.minute:-off} target=zygote-fatal`, and **`zygote.critical_window.minute=10` is set** in the build. Four fast failures triggers the reboot, which matches the observed ~37 second cycle (4 x ~8 s).
+- Leading hypothesis: **zygote fails at the dynamic-linker/exec stage**, which prints to stderr -> kmsg, the one buffer that did not survive. That explains a critical service failing repeatedly while writing nothing to pmsg.
+- Tail of the log is `QC-time-services` (`time_daemon`) looping `ats_0`..`ats_15` with `genoff_post_init:Error in accessing storage` and `Unable to open file`, reading `/mnt/vendor/persist/time/ats_N`. Real defect, but not obviously the reboot cause.
+- `libperfmgr` emits repeated `Failed to read Node[N]'s <HoldFd|AllowFailure|WriteOnly|Paths|DefaultIndex|...>` - the Power HAL's `powerhint.json` is not parsing. Real defect, follow up after boot.
+- `adbd` **never enumerated on USB** during the 37-second attempt (verified by a host-side `adb`/`fastboot` state watcher). This blocks live debugging and is itself a bug to fix.
+
+### Checked and eliminated (all free, host-side)
+
+- `init.zygote64_32.rc` looks like it only defines `zygote_secondary`, but it **imports `init.zygote64.rc`** which defines the primary critical `zygote`. Not a defect.
+- `ro.zygote=zygote64_32` and all three `init.zygote*.rc` files are installed. Not a defect.
+- `system/lib/libart.so` missing is **normal** - libart ships in the ART APEX.
+- All 13 direct `NEEDED` libraries of `app_process64` resolve, including `libnativeloader.so` and `libsigchain.so` from `apex/com.android.art/lib64`.
+- The boot ramdisk `fstab.qcom` is correct.
+
+### Recommended next step
+
+Make the failure live-debuggable instead of fighting ramoops: rebuild with `zygote.critical_window.minute` unset/`off` so a zygote failure no longer reboots the device, plus whatever is needed to bring `adbd` up early, then install once and read `logcat`/`dmesg` directly. Optionally add `ecc-size` to the `ramoops_mem` node in `sdmmagpie-moto-common-overlay.dtsi`, though ~28% corruption likely exceeds what Reed-Solomon can correct.
+
+## 2026-07-25 XBL GPT-attribute fix committed
+
+- The hardware-verified fix is no longer loose in a working tree. Committed on the local `lineage-23.2` branches:
+  - `hardware/qcom-caf/bootctrl`: `6024c10` (`bootctrl: Select the XBL chain by GPT attributes on odessa`), on top of `6863795`. The repository had been left on a detached HEAD; the branch was checked out before committing.
+  - `device/motorola/sm6150-common`: `f64cb3e5` (`sm6150-common: Select the XBL chain by GPT attributes`), on top of `aed760a0`.
+- Neither commit is pushed. The bootctrl fork remote is `fork` = `https://github.com/ARLBR10/android_hardware_qcom_bootctrl.git`. `manifests/odessa.xml` still pins `6863795`, which does **not** contain the fix; update the pin only after the commit is pushed to a remote the manifest can fetch.
+
+## 2026-07-25 root cause of "adbd never enumerated": ro.adb.secure gates persist.sys.usb.config
+
+Proven from build-system source on the host, not theorised. This is why no USB device of any kind appeared during the 37-second bootloop window.
+
+- `vendor/lineage/config/common.mk` sets, for every variant except `eng` and except when `WITH_ADB_INSECURE` is defined: `ro.adb.secure=1` **and** `PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG := true`.
+- `build/soong/scripts/gen_build_prop.py` turns `ProductNotDebuggableInUserdebug` into `enable_target_debugging = False`, so the current build ships **`ro.debuggable=0` even though `ro.build.type=userdebug`**. Confirmed in the built `out/target/product/odessa/system/build.prop`.
+- `build/make/tools/post_process_props.py:mangle_build_prop()` auto-adds `persist.sys.usb.config=adb` **only when `ro.adb.secure == "0"`**. With Lineage's default it is never added, and it is set nowhere else in the build.
+- `system/core/rootdir/init.usb.rc:109` is `on boot && property:persist.sys.usb.config=*` -> `setprop sys.usb.config ${persist.sys.usb.config}`. With the property unset, that trigger never fires, `sys.usb.config` is never set, no configfs gadget is ever composed, and `adbd` is never started. Normally the user enables USB debugging in Settings, which sets `persist.sys.usb.config` from `UsbDeviceManager` - impossible on a device that never finishes booting.
+- The rest of the USB path is already correct and needs no change: `sys.usb.configfs=1` is set by `init.mmi.chipset.rc` and `init.target.rc`; `init.mmi.usb.rc` mounts functionfs `adb` and drives `sys.usb.controller` from `vendor.usb.controller`; AOSP `init.usb.configfs.rc:17,20` handles a plain `adb` composition. Recovery ADB already works on this kernel, so the UDC and DWC3 stack are fine.
+- Fix for bring-up: build with `WITH_ADB_INSECURE=true`. Verified by product config on 2026-07-25 that it yields `ro.adb.secure=0` and leaves `PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG` empty (hence `ro.debuggable=1`, hence `persist.sys.usb.config=adb`). `ro.adb.secure=0` is required, not merely convenient: with authentication on there is no UI to accept the host key.
+- `zygote.critical_window.minute=10` was commented out in `device/motorola/sm6150-common/properties.mk` so a repeatedly failing zygote no longer reboots the device. **Both of these are temporary bring-up settings and must be reverted before any release build.**
+- Note on the earlier pmsg capture: liblog's `PmsgWrite` gates on the **compile-time** `ANDROID_DEBUGGABLE` macro, not runtime `ro.debuggable`. A userdebug build therefore writes all log ids to pmsg regardless of `ro.debuggable=0`, so "zygote/system_server/servicemanager never logged" remains a valid conclusion.
+- `ro.dalvik.vm.enable_uffd_gc=false` was checked in the built `product/etc/build.prop` and is correct for Linux 4.14. It is not a zygote suspect.
+
+## 2026-07-25 bootctrl fork published and manifest pinned
+
+- `hardware/qcom-caf/bootctrl` commit `6024c10` was pushed to `https://github.com/ARLBR10/android_hardware_qcom_bootctrl.git` branch `lineage-23.2`. Full SHA `6024c108fc43286e09b4d63b7c620ed8ef0a5903`.
+- `manifests/odessa.xml` now pins that revision, replacing `6863795de5ec856c98244b1e5c3a4cd1f1b9be1c`. Its stale comment, which described the disproven "upstream marks xbl unbootable" theory and pointed at `docs/xbl-unbootable-root-cause-20260724.md`, was rewritten to the proven GPT-attribute cause. `lineageos/.repo/local_manifests/odessa.xml` is a symlink to the tracked file, so it needs no separate update.
+- `device/motorola/sm6150-common` `f64cb3e5` is committed locally but its remote is `origin`; it has not been published.
+
+## 2026-07-25 ADB-debuggable bring-up build verified on the host
+
+- Built from the fixed trees with `WITH_ADB_INSECURE=true`. Target-files: `out/target/product/odessa/obj/PACKAGING/target_files_intermediates/lineage_odessa-target_files.zip`, 2,614,932,420 bytes.
+- Confirmed in the built property files: `ro.debuggable=1` (`system/build.prop`), `ro.adb.secure=0` and `persist.sys.usb.config=adb` (`system/system_ext/etc/build.prop`), and `zygote.critical_window.minute` absent everywhere.
+- **Both shipping boot-control binaries now contain the fix**, unlike the GPTFIX zip. Test: the disabled `gpt_utils_set_xbl_boot_partition()` body is the only source of the literals `scsi_generic`, `lun as boot lun` and `Failed to locate secondary xbl`; a control grep for `block dev lseek64`/`by-name/xbl_a` proves gpt-utils is statically linked in and its strings are visible.
+  - `recovery/root/system/bin/hw/android.hardware.boot-service.qti.recovery`, SHA-256 `af60d7bf86515846b2bc7ad13b2929aa5148b0c75e5eedaa7ba2a6c090bcc02a`: control 1, boot-LUN 0.
+  - `vendor/bin/hw/android.hardware.boot-service.qti`, SHA-256 `7e6dd52b6cc031e173f5d1c7dbf89287a2304d873a453c60535a2148bcc2fbae`: control 1, boot-LUN 0.
+- Use this string test rather than hashing `vendor/lib*/libgptutils.qti.so`, which is stale and unused because the library is linked statically.
+
+## 2026-07-25 device state before the ADB-debug install
+
+READ ONLY bootloader queries, no writes:
+
+- `product: odessa`, `securestate: flashing_unlocked`, `is-userspace: no`, `battery-voltage: 4455`.
+- **`slot-count: 2`, `has-slot:boot: yes`** - the bootloader enumerates partitions normally. This is direct confirmation that the XBL GPT-attribute fix eliminated the degraded `slot-count: 1` state; no `gpt.bin` reflash is needed any more.
+- `current-slot: b`; `slot-successful:a/b: no`; `slot-unbootable:a/b: no`.
+- `running-boot-lun: 3` (the B-side XBL LUN) **with a healthy bootloader**. This independently confirms the boot LUN is irrelevant on this device: an earlier session blamed LUN 3 for the degraded view, but that was confounded by the split GPT attributes. Do not reopen the boot-LUN theory.
+- Slot layout: A = stock Android 11 `RPAS31.Q2-59-17-4-3-9`, B = the bootlooping LineageOS.
+- Decision (user, 2026-07-25): sideload from slot B's recovery so the payload installs to **slot A**, accepting the loss of the stock fallback. The recovery path is bootloader fastboot plus the official RPAS31 package, which has already been used successfully.
+
+## 2026-07-25 slot-A install: boots die before userspace
+
+The ADB-debug build was installed to slot A by sideload from slot B's recovery. `Install completed with status 0`, and **the partition table survived a full install plus slot switch** - `slot-count: 2`, `has-slot:boot: yes` throughout. The XBL GPT-attribute fix is holding under the exact operation that used to near-brick the device.
+
+### What the failure looks like
+
+- Slot A failed 7 times, ABL set `slot-unbootable:a: yes` / `slot-retry-count:a: 0` and fell back to slot B (`slot-retry-count:b: 7`).
+- With `tools/watch-usb.sh` running: **53 seconds from reboot to catching it in the bootloader, with no USB device of any kind** - no adb, no raw gadget. About three cycles, so roughly 18 s each, against ~37 s for slot B's build. It never reaches `on boot`, where the USB gadget is composed.
+- After those failed boots `/sys/fs/pstore/` was **completely empty**. pstore presents the previous boot's data and then zeroes the zone, so an empty pstore means the last boot wrote nothing at all: no Android log, no panic record.
+- The earlier `pmsg-ramoops-0` capture (262,000 bytes, the full zone) contained only `update_engine_sideload` content - `vold` 0, `zygote` 0, `odsign` 0, `keystore` 0 exact matches. Seven boots reaching `post-fs-data` like slot B's build would have flushed that out. They did not.
+
+### Eliminated
+
+- **Slot A's kernel, dtbo and AVB chain are fine**: `fastboot reboot recovery` on slot A boots Lineage Recovery with working ADB, reporting `ro.boot.slot_suffix=_a` and `23.2-20260725-UNOFFICIAL-odessa`.
+- **The ramoops region is properly reserved**: `ramoops: attached 0xbf800@0xaf000000, ecc: 0/0`. `CONFIG_PSTORE_CONSOLE=y` is set in the built kernel config. `console-ramoops-0` has nevertheless never appeared in any capture on this device; treat the console zone as not surviving reset here. `pstore: allocate compression buffer error!` only disables compression of panic records and falls back to uncompressed.
+- **Virtual A/B is not enabled** (`misc_info.txt` has `ab_update=true` and `use_dynamic_partitions=true` but no `virtual_ab=true`), so snapshot merge is not involved.
+- **The changed properties cannot be the cause of a pre-userspace failure.** `ro.debuggable=1`, `ro.adb.secure=0` and `persist.sys.usb.config=adb` live in `/system/build.prop` and `/system/system_ext/etc/build.prop`, which are read only after first-stage mount succeeds.
+
+### Leading hypothesis
+
+Slot A is a different firmware environment. `docs/firmware-slot-comparison-20260719.md` recorded **16 of 19 low-level firmware partitions differing between slots**, including `tz`, `hyp`, `keymaster`, `cmnlib`, `cmnlib64`, `devcfg`, `aop`, `abl`, `xbl`, `xbl_config`, `modem`, `bluetooth`, `qupfw`, `storsec` and `uefisecapp`. None are carried by the OTA payload. Slot A boots stock Android 11 fine, so its firmware is internally consistent - but it is not the firmware the LineageOS vendor image was validated against on slot B.
+
+The decisive experiment is to install the same OTA to slot B and compare: same build, different firmware. Do not conclude anything about the properties change until that runs.
+
+### Tooling
+
+- `tools/watch-usb.sh` (new, HOST ONLY) prints one timestamped line per change in `lsusb` / `adb devices` / `fastboot devices`. It catches raw USB enumeration that never reaches `adbd`, which `adb devices` alone cannot, and logs no serial numbers.
+- Recovery ships `fastbootd`, `update_engine_sideload`, `sha256sum` and `dmesg`, but **no `lpdump`, `dmctl` or `lptools`**. Inspect logical partitions through fastbootd's `is-logical:` / `partition-size:` variables instead.
+- `/proc/cmdline` on this device contains the serial, Wi-Fi MAC and Bluetooth MAC. Always redact before sharing or recording.
+
+## 2026-07-25 slot-B control run: the slot/firmware hypothesis is dead
+
+The same ADB-debug OTA was installed to slot B from slot A's recovery (`Install completed with status 0`) and behaves **identically to slot A**: `tools/watch-usb.sh` recorded 55 seconds with no USB device of any kind, and the user counted about **7 logo cycles, so roughly 8 s per boot attempt**. The bootloader was entered by hand with Volume Down; the phone does not reach it on its own.
+
+Same build, two very different firmware environments, identical failure. `docs/firmware-slot-comparison-20260719.md`'s 16-of-19 firmware differences are therefore **not** the cause. Do not reopen that.
+
+### `super` is healthy - not a dynamic-partition problem
+
+Read from **fastbootd** (`adb reboot fastboot` from recovery; recovery ships `fastbootd` but no `lpdump`):
+
+- `is-userspace: yes`, `is-logical:system_a: yes`, `is-logical:system_b: yes`
+- `partition-size:system_a` = `system_b` = `0xAA6D5000` (2,858,536,960 B)
+- `partition-size:vendor_b` = `0x1FA42000` (531,341,312 B), `partition-size:product_b` = `0x4788B000` (1,200,033,792 B)
+
+Slot B totals ~4.59 GB against a 4,864,868,352 B group. Metadata and sizing are sane on both slots.
+
+### The failing build is functionally identical to the one that reached zygote
+
+Compared today's build against `lineage-23.2-20260724-GPTFIX-TRY2-UNOFFICIAL-odessa.zip`, the build that reached the zygote handoff. Extracted with `out/host/linux-x86/bin/ota_extractor -payload payload.bin -partitions boot,dtbo,vbmeta`, unpacked with `unpack_bootimg`:
+
+- **kernel byte-identical**: `2da1095572cf5a2b580d9349fbf4080e91fd077359b10baf611ced3ceba78d62`
+- **boot ramdisk identical**: `diff -r` over both extracted ramdisks reports no difference (8 files: `init`, `fstab.qcom`, `e2fsck`/`resize2fs`/`tune2fs`, three libs)
+- **kernel cmdline identical**, header v2, page size 4096
+- **DTBO device trees identical**: all three FDT entries match (`91b70dfc…`, `dfa2887c…`, `6d96c774…`). The whole-image hashes differ (`8d807087…c87293` vs `0c8998fc…c627b9`) **only** in 244 bytes of AVB footer past the 802,816-byte payload - the per-build random salt and the `com.android.build.dtbo.fingerprint` property. **`8d807087…` recorded as "unchanged DTBO" in earlier entries is not evidence of anything; that value simply came from reusing one file.** Do not treat a differing `dtbo.img`/`vbmeta.img` hash as a real change without comparing the payload separately from the footer.
+
+The only functional difference between the two builds is the contents of `system`, `vendor` and `product`.
+
+### Where that leaves the diagnosis
+
+An ~8 s cycle is consistent with bootloader time plus `CONFIG_PANIC_TIMEOUT=5`. A first-stage mount failure would make init abort, and a dead init panics the kernel - which fits. But first-stage init is the *same binary* that worked, and `super` is healthy, so a straightforward mount failure is hard to explain. Do not commit to this until measured.
+
+Kernel options available for the next step: `CONFIG_MAGIC_SYSRQ=y` (default enable mask `0x1`, so `echo 1 > /proc/sys/kernel/sysrq` is needed before `echo c > /proc/sysrq-trigger`), `CONFIG_PANIC_TIMEOUT=5`, `CONFIG_PSTORE_RAM=y`. The ramoops DT node sets `no-dump-oops`, so only real panics produce a dump record.
+
+`fstab.qcom` mounts `system`/`vendor`/`product` as **ext4**, `logical`, `slotselect`, `first_stage_mount`, with `avb=vbmeta` plus GSI `avb_keys` on `system` and plain `avb` on `vendor`.
+
+### Next experiments, in cost order
+
+1. **Validate the pstore dump zone** with a deliberate sysrq panic from recovery, then check whether `dmesg-ramoops-0` appears. `console-ramoops-0` has never survived on this device; if the dump zone does not survive either, ramoops must be abandoned as a channel and the cmdline needs `androidboot.init_fatal_panic=true` plus another sink.
+2. **Install TRY2 to the inactive slot** so the known-good-to-zygote build and the failing build live on different slots and can be compared by `fastboot set_active` alone. This separates "the build regressed" from "the device state changed", and given the boot-image equivalence above, the latter is the more likely of the two.
+
+## 2026-07-25 the ADB-debug regression is exactly four properties
+
+TRY2 (`lineage-23.2-20260724-GPTFIX-TRY2-UNOFFICIAL-odessa.zip`, reaches the zygote handoff) was reinstalled and **still holds the logo far longer than the ADB-debug build**, so the device state is fine and the regression is genuinely in the build.
+
+### Method note - three false findings came from comparing the wrong artifacts
+
+Loose `out/target/product/odessa/*.img` are stale and must never be compared against payload-extracted images. Doing so produced three wrong conclusions in one session: a "changed DTBO", "six missing audio HAL libraries", and "45 missing vendor entries including every `/rfs/msm/...` directory". All three evaporated under a like-for-like comparison. A fourth, "today's system is 1.76 GB smaller", came from stat-ing a file that was still being written by a background extraction. **Always extract both sides with `out/host/linux-x86/bin/ota_extractor -payload payload.bin -partitions ...` and confirm the extraction finished.**
+
+### Like-for-like payload comparison
+
+- `boot.img` byte-identical: `9edfc27c2a9472b9…`
+- `dtbo.img` byte-identical: `8d80708752b4bcc2…` (the long-familiar value)
+- `system`: identical block count 687033, used blocks 379473, inode count 172032, **used inodes 7170 on both**; recursive file listing gives 7161 entries on both with **zero path differences**, and zero mode/size differences apart from the two files below
+- Tool: scratchpad `ext4ls.py` walks an ext4 image with `debugfs -f` one directory level per invocation, no mounting and no root
+
+### The complete functional delta
+
+`/system/build.prop`: `ro.debuggable` 0 -> 1; added `dalvik.vm.lockprof.threshold=500` and `persist.debug.dalvik.vm.core_platform_api_policy=just-warn`.
+`/system/system_ext/etc/build.prop`: `ro.adb.secure` 1 -> 0; added `persist.sys.usb.config=adb` (auto-added by `post_process_props.py`).
+
+Everything else is build timestamps. Nothing else in `system` changed at all.
+
+### Leading hypothesis, not yet proven
+
+`persist.sys.usb.config=adb` is the only one of the four that touches hardware. Without it `init.usb.rc:109` (`on boot && property:persist.sys.usb.config=*`) never fires, `sys.usb.config` is never set, and **the USB gadget is never composed in full Android** - true of every build that has ever reached zygote on this device. Composing it exercises `init.mmi.usb.rc` (two gadgets, diag FunctionFS, vendor USB HAL) on a DWC3 stack with a long failure history here.
+
+Counter-evidence to weigh: recovery composes an adb gadget on the same kernel and works. And `on boot` runs *after* `post-fs-data`, so a failure there should still leave `vold`/`apexd` output in pmsg - which was not seen. **The pstore evidence on this device is unreliable enough that "dies before userspace" should no longer be treated as established.**
+
+### Free test before any rebuild
+
+Boot the already-installed debug build **with the USB cable unplugged**. Gadget pullup/VBUS only engages with a cable, so if the loop stretches back out toward the old ~37 s logo-hold behaviour, the USB gadget is confirmed as the trigger at zero cost.
+
+If a rebuild is needed to bisect, the two variants are: (a) clear `PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG` without `WITH_ADB_INSECURE`, giving `ro.debuggable=1` + `ro.adb.secure=1` and **no** `persist.sys.usb.config`; (b) `WITH_ADB_INSECURE` as now. Variant (a) booting cleanly would confirm the USB property.
+
+## 2026-07-25 BISECTED: `persist.sys.usb.config=adb` breaks the boot
+
+Full detail and handoff: `docs/handoff-20260725-usb-gadget.md`.
+
+A second bisect build was made with `WITH_ADB_INSECURE=true` **plus**
+`PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG := true` re-asserted in
+`device/motorola/sm6150-common/common.mk`, giving `ro.debuggable=0`,
+`ro.adb.secure=0`, `persist.sys.usb.config=adb`. Verified from the OTA payload,
+not from loose `out/` images. It was installed successfully and **still bootloops**.
+
+Payload-to-payload comparison against TRY2 (the last build that reaches the zygote
+handoff): `boot.img` and `dtbo.img` byte-identical (`9edfc27c…`, `8d807087…`);
+`system` has 7161 entries on both with zero path, mode or size differences except
+one file. That file is `/system/system_ext/etc/build.prop`, and the entire
+functional delta is `ro.adb.secure` 1 -> 0 plus the auto-added
+`persist.sys.usb.config=adb`.
+
+- **`ro.debuggable` is exonerated.** It was 1 in the first failing build and 0 in
+  this one; both fail.
+- `ro.adb.secure=0` only waives ADB authentication at runtime, so the functional
+  trigger is `persist.sys.usb.config=adb`.
+- That property is the only thing that makes `init.usb.rc:109`
+  (`on boot && property:persist.sys.usb.config=*`) fire, set `sys.usb.config`, and
+  **compose the USB gadget in full Android** - a path that has never once run on
+  this device, because LineageOS ships `ro.adb.secure=1` and
+  `post_process_props.py` only adds the property when it is `0`.
+- The gadget *infrastructure* is built in `on init` by `init.mmi.usb.rc` on every
+  build; the only addition is binding the controller
+  (`write /config/usb_gadget/g1/UDC ${sys.usb.controller}`). Recovery composes an
+  adb gadget successfully on this same kernel, so the bug is specific to the
+  full-Android path.
+
+Unexplained and worth re-measuring: the bisect build's cycle was reported as ~3 s
+while the earlier debug build was ~28 s, even though the bisect build is *closer*
+to TRY2. TRY2 itself has still never been timed.
+
+Consequence for the whole debugging strategy: the obvious way to get live
+`logcat`/`dmesg` off a failing boot is itself what breaks the boot. Fix DWC3
+controller binding under full Android first, or find an observability channel that
+does not need USB.
+
+## 2026-07-26 persistent-log diagnostic OTA
+
+- The USB-property bisection identifies a separate regression in the ADB-debug
+  build; it does not explain TRY2's original failure at the zygote handoff.
+  Investigation therefore returned to the original failure without requiring
+  full-Android USB, boot timing, or ramoops.
+- Removed the temporary `PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG := true` bisect
+  override from `device/motorola/sm6150-common/common.mk`. The build must be made
+  without `WITH_ADB_INSECURE` so normal Lineage properties remain in effect.
+- Added temporary bring-up defaults `persist.logd.logpersistd=logcatd` and
+  `ro.logd.kernel=true`. Android's existing `logcatd` service writes all log
+  buffers under `/data/misc/logd`, allowing retrieval from recovery after a cold
+  reset. `zygote.critical_window.minute` remains disabled for this diagnostic.
+- Correction to the USB-gadget handoff: init does not automatically send zygote
+  stdout/stderr to kmsg. `SetupStdio()` sends both to `/dev/null` unless the
+  service explicitly has `stdio_to_kmsg`. The dynamic linker can also log to
+  logd, so persistent logcat is the first non-USB evidence channel to test.
+- User-built OTA:
+  `lineage-23.2-20260726-BOOTLOOP-TRY2-UNOFFICIAL-odessa.zip`, 1,028,459,341
+  bytes, SHA-256
+  `c7a079102ad3a8538e6dbb496bcc5825c3f4333608100d6d3b8356d100d7f71c`.
+  ZIP integrity and payload-property hashes pass; extracted payload SHA-256 is
+  `981b1adeeb6acd4697f29cc7fa57231296be594d7b170018c89c5f19020c0d24`.
+- Exact payload extraction verifies `ro.debuggable=0`, `ro.adb.secure=1`, no
+  `persist.sys.usb.config`, `persist.logd.logpersistd=logcatd`, and
+  `ro.logd.kernel=true`. `/system/etc/init/logcatd.rc` is present. Extracted
+  system image SHA-256 is
+  `52ed111b55b771ac3ad4fd192b57783704726a4983865b7e410a0ed66e8546db`.
+- This is HOST ONLY validation. The OTA has not been installed or booted, and no
+  phone command was issued while validating it.
+
+## 2026-07-26 persistent-property and log-retrieval results
+
+- The diagnostic OTA installed from recovery A to slot B with AIDL BootControl,
+  all 2,268 payload operations, filesystem verification, postinstall, and slot
+  activation succeeding. Recovery reported `Install completed with status 0`.
+  The post-install bootloader remained healthy with two slots and a complete
+  partition view.
+- Before that sideload, loose `boot_b`, `dtbo_b`, `recovery_b`, and `vbmeta_b`
+  images were manually flashed; manual `system_b`, `product_b`, and `vendor_b`
+  resize attempts failed before image transfer because they were issued in
+  bootloader fastboot. The subsequent verified OTA replaced the complete slot-B
+  image set and removed this mixed-image state. Do not manually flash dynamic
+  partitions or use mutable loose output images.
+- The first boot of the nominally normal-USB diagnostic still showed the rapid
+  regression. A directly captured slot-B pmsg record was only 834 bytes but
+  contained repeated corrupted-yet-identifiable `adbd`, authentication, and
+  FunctionFS endpoint messages. Artifact:
+  `.downloads/pmsg-bootloop-slotb-direct-20260726.bin`, SHA-256
+  `24c870e23f07460e4a43f4c1e6b0c7187cd3babf9c0370cde622d42911340a18`.
+- Root cause of that misleading retest: `persist.sys.usb.config=adb` from the
+  earlier insecure build survived in metadata-encrypted userdata. Removing the
+  property from a later build image does not clear an existing persisted value.
+  Recovery factory reset was performed with user approval, erasing userdata and
+  persisted properties.
+- After the wipe, the rapid loop disappeared. Slot B returned to the original
+  behavior: Motorola logo, unlock warning, a long logo hold, black screen, then
+  reset. Two B retries were consumed while B remained selected and the
+  bootloader/partition view stayed healthy. This separates the stale USB gadget
+  regression from the original boot failure and confirms that USB is not the
+  next root-cause path.
+- Immediate post-wipe slot-B pstore was empty. Android's `logcatd` likely wrote
+  under `/data/misc/logd`, but recovery cannot retrieve it: userdata is metadata
+  encrypted, recovery starts no `vold` or `keystore2`, and creates no decrypted
+  dm mapping. Raw userdata correctly fails the F2FS magic check. `/metadata`
+  mounts read-only and contains the metadata-encryption key directory, but no key
+  material was displayed or copied.
+- Temporary uncommitted diagnostic changes now redirect existing `logcatd` from
+  `/data/misc/logd` to unencrypted `/metadata/logd`. The path is labeled
+  `misc_logd_file`, and init receives only the parent-directory permission needed
+  to create it. The service remains gated by the temporary
+  `persist.logd.logpersistd=logcatd` property. `git diff --check` passes in
+  `system/logging`, `system/sepolicy`, and `device/motorola/sm6150-common`; no
+  build has yet validated policy or packaging.
+
+## 2026-07-26 metadata-log diagnostic artifact
+
+- The user completed cached `target-files-package` and OTA generation
+  successfully after the `/metadata/logd` changes.
+- Target-files archive SHA-256 is
+  `8bad580d500e82541605cae02b7f08b5d74e43342e74b9cddadb0619c7a0773b`;
+  ZIP integrity passes.
+- Installable OTA:
+  `lineage-23.2-20260726-BOOTLOOP-TRY3-UNOFFICIAL-odessa.zip`, 1,028,459,846
+  bytes, SHA-256
+  `39fb5ec2f3cb225cdbf3892592e8c24288c2193171c2dc8d136aacb15265ee91`.
+  ZIP integrity and payload-property hashes pass.
+- Exact OTA payload SHA-256 is
+  `ce46f2c0b5fb718aa3ab9c2b3d15b50c6449b82c1696207b10cda5e74d7958ec`.
+  Exact payload-extracted system image SHA-256 is
+  `c5e6c9d2211b086b6b115a9423492533b5ee035d6c108e0609668f92c4b4c7ab`.
+- Payload extraction verifies the shipping system image contains the
+  `/metadata/logd` mkdir, clear, and continuous `logcatd` output paths plus
+  `/metadata/logd(/.*)? -> misc_logd_file` in compiled platform file contexts.
+  Shipping properties are `ro.debuggable=0`, `ro.adb.secure=1`,
+  `persist.logd.logpersistd=logcatd`, and `ro.logd.kernel=true`, with no
+  `persist.sys.usb.config` in either checked property file.
+- This validation is HOST ONLY. TRY3 has not yet been installed or booted.
+
+## 2026-07-26 TRY3 failure and diagnostic-channel decisions
+
+- TRY3 installed from recovery A to target slot B with all payload operations,
+  filesystem verification, postinstall, and slot activation succeeding;
+  recovery reported status 0. The bootloader remained healthy.
+- TRY3 then reset rapidly until B exhausted all seven retries and became
+  unbootable, after which slot A showed the older long-logo failure and consumed
+  one retry. Recovery mounted `/metadata` read-only afterward, but
+  `/metadata/logd` did not exist. The relocated logger never reached its own
+  output trigger and changed boot behavior, so it is rejected as a diagnostic.
+- Exact payload audit confirms TRY2 and TRY3 have byte-identical boot, DTBO, and
+  product partitions. TRY3 changes system policy/init, vendor precompiled policy,
+  recovery policy, and dependent vbmeta. This is a real payload difference, not
+  a loose-output mismatch or AVB rejection; both vbmeta images use flags 3.
+- The `/metadata/logd` init, file-context, policy, and property changes were fully
+  reverted. `system/logging` and the two touched `system/sepolicy` files are back
+  to their original bytes.
+- Ramoops was tested directly rather than inferred: with recovery userdata and
+  metadata unmounted, SysRq was enabled and a deliberate kernel panic was
+  triggered. The phone warm-reset to bootloader, but immediate recovery showed
+  an empty `/sys/fs/pstore`. Therefore this device's ramoops setup cannot retain
+  even a known panic and must not be used as an evidence channel.
+- The saved known-working Pixys recovery was inspected host-only. Like Lineage
+  Recovery, it contains no `vold`, `vdc`, or `keystore2`; it cannot unlock the
+  metadata-encrypted userdata. A correct recovery decrypt implementation would
+  require normal Android's vold/keystore2/Qualcomm Keymaster stack, Binder/init
+  ordering, libraries, linker namespaces, and recovery SELinux. Do not invent a
+  recovery-only dm-default-key path as a shortcut.
+
+## 2026-07-26 TRY4 bounded zygote-log design
+
+- Temporary uncommitted TRY4 keeps stock `logcatd` writing to
+  `/data/misc/logd`, which is the exact logger arrangement under which post-wipe
+  TRY2 retained the original long failure behavior.
+- `persist.logd.logpersistd=logcatd` and `ro.logd.kernel=true` are enabled; normal
+  secure USB properties remain, with no `persist.sys.usb.config` default.
+- The existing primary zygote service has one new `onrestart copy` action:
+  `/data/misc/logd/logcat` to the exact unencrypted path
+  `/metadata/vold/bootloop-logcat`. It does not list, read, or copy metadata key
+  material. Recovery will later mount metadata read-only and pull only that exact
+  file.
+- Existing SELinux types are reused. Init gains read permission for
+  `misc_logd_file` and create/write permission for `vold_metadata_file`; there is
+  no new type, domain, service, executable, USB path, or recovery component.
+  Zygote's critical reboot remains disabled. `git diff --check` passes in the
+  device, `system/core`, and `system/sepolicy` repositories. No TRY4 build has
+  run yet.
+
+## 2026-07-26 TRY4 installed; retrieve metadata log next
+
+Full continuation guide: `docs/handoff-20260726-bootloop-observability.md`.
+
+- Exact installable TRY4 OTA is 1,028,459,562 bytes, SHA-256
+  `b8ba2eda848e8bb6ac108f3ea372307564f50427415849126da602f343daa704`.
+  Direct payload extraction verifies the zygote `onrestart copy` action and
+  compiled init SELinux permissions. Extracted system image SHA-256 is
+  `8d0305bd177c0ce2336a912217a2bb636d3fa92b57deb5681673046d6ee4d7b6`.
+- Provenance caveat: the mutable target-files ZIP remained stale at TRY3's hash
+  and timestamp while the exact TRY4 OTA payload contained the intended bytes.
+  Preserve and reason from the validated OTA; regenerate target-files before any
+  reproducibility claim.
+- TRY4 installed from recovery B to target A with status 0. Recovery log
+  `recovery-slotb-try4-20260726.log`, SHA-256
+  `94ea4e77e7419d36d677275bca3fe1c299cdf6aa90a122d2885a5db9f6c87a84`,
+  records AIDL BootControl and successful download, filesystem verification,
+  postinstall, and activation.
+- TRY4 failed all seven slot-A retries and A became unbootable. Automatic
+  fallback B then consumed two retries. Current verified bootloader state:
+  current B, A unbootable with zero retries, B bootable with five retries,
+  `slot-count: 2`, `has-slot:boot: yes`, `securestate: flashing_unlocked`, battery
+  4.461 V. Partition enumeration remains healthy.
+- Immediate next action: from the current bootloader, boot recovery B, enable
+  ADB, mount `/metadata` read-only, and retrieve only
+  `/metadata/vold/bootloop-logcat`. Do not boot Android, re-arm A, build, wipe, or
+  flash first. The file may contain identifiers and must remain ignored and
+  unredacted only locally.
+
+## 2026-07-26 TRY4 log absent; TRY5 stage markers pending
+
+- The phone was still in Motorola bootloader fastboot. It was rebooted directly
+  to recovery without changing slots or partitions. Recovery ADB confirmed slot
+  `_b`.
+- `/metadata` was mounted read-only and only the exact diagnostic path
+  `/metadata/vold/bootloop-logcat` was queried. The file did not exist. Metadata
+  was immediately unmounted; no Android boot, wipe, flash, slot change, or other
+  device write followed. The phone remains in slot-B Lineage Recovery.
+- The absent file does not distinguish a pre-zygote failure from zygote not
+  restarting or `/data/misc/logd/logcat` being unavailable. TRY4's copy action
+  runs only from the primary zygote service's `onrestart` path.
+- Temporary TRY5 source adds two init built-in markers without moving logcatd or
+  adding a service/executable/domain: `/metadata/vold/bootloop-zygote-start` is
+  written at the start of the existing `zygote-start` action, and
+  `/metadata/vold/bootloop-zygote-restarted` is written before TRY4's existing
+  log copy when primary zygote restarts. Existing narrowly scoped init policy
+  for `vold_metadata_file` and `misc_logd_file` covers the markers and copy.
+- Interpretation after one controlled TRY5 boot: no start marker means init did
+  not reach `zygote-start` (or the vold metadata directory was unavailable);
+  start marker without restart marker means zygote did not restart; both markers
+  without the copied log means the logcatd source was unavailable/unreadable;
+  all three files provide the required zygote failure log. Check only these exact
+  paths from read-only metadata and do not list `/metadata/vold`.
+- `git diff --check` passes in `system/core`, `system/sepolicy`, and the SM6150
+  common device tree. A fresh target-files archive and exact TRY5 OTA still need
+  to be built and payload-verified before any sideload.
+- The user completed the fresh TRY5 target-files build. Archive:
+  `lineageos/out/target/product/odessa/obj/PACKAGING/target_files_intermediates/lineage_odessa-target_files.zip`,
+  2,614,933,712 bytes, SHA-256
+  `d9648eb39e66587033cae25af3845cbaa0222c1d8ba62e6cb86f3157f65a9c89`;
+  ZIP integrity passes.
+- Direct archive inspection confirms the `zygote-start` marker, zygote-restart
+  marker, and TRY4 log copy are all present. Compiled platform policy grants init
+  the required `misc_logd_file` read and `vold_metadata_file` create/write
+  permissions. Properties remain `ro.debuggable=0`, `ro.adb.secure=1`,
+  `persist.logd.logpersistd=logcatd`, and `ro.logd.kernel=true`; there is no
+  `persist.sys.usb.config` or zygote critical-window property. Generate and verify
+  an OTA only from this exact target-files archive.
+- Exact TRY5 installable OTA:
+  `lineageos/out/target/product/odessa/lineage-23.2-20260726-BOOTLOOP-TRY5-UNOFFICIAL-odessa.zip`,
+  1,028,459,980 bytes, SHA-256
+  `9eee5669f7fc416678ec19da8b8ff1759e42b7bceab9589ebb25a8cb6df15a3b`.
+  ZIP integrity passes and required A/B OTA entries are present. Payload size is
+  1,028,452,686 bytes, SHA-256
+  `1912a1d2728c7829577a0503717317398ab72779f9ffb994d1412f7af5f8c4a6`;
+  its base64 hash exactly matches `payload_properties.txt`.
+- Direct extraction of `system` from that exact payload produced SHA-256
+  `cec2dfe22dec802dcaedc7e042f6e5363148846888efc91ecd558e6dafbef1ed`.
+  Filesystem inspection reconfirms both stage markers, the restart log copy,
+  `ro.debuggable=0`, `ro.adb.secure=1`, persistent logcat enabled, and no USB
+  persist or zygote critical-window property. This supersedes TRY4's stale
+  target-files provenance caveat for TRY5.
+- Live read-only preflight finds Lineage Recovery ADB on `odessa`, slot `_b`, at
+  98% battery. No install, wipe, reboot, slot change, or partition write has yet
+  been performed with TRY5.
+- After explicit user authorization, TRY5 was sideloaded from recovery B to
+  target slot A. The host-side `adb sideload` display remained around 47% and
+  hit its ten-minute command timeout while recovery continued processing; it
+  must not be retried. The recovery UI subsequently reported completion.
+- Captured ignored recovery log:
+  `lineageos/.downloads/recovery-slotb-try5-20260726.log`, SHA-256
+  `53893d10a13881e43df17e561b306a9fe580549105996d64e1671d2d89a93534`.
+  It may contain identifiers and must not be committed or quoted unredacted.
+  The log proves source B, target A, `DownloadAction`,
+  `FilesystemVerifierAction`, and `PostinstallRunnerAction` all `kSuccess`,
+  `Update successfully applied`, and `Install completed with status 0`.
+- TRY5 has not yet been booted. On its first boot, catch the first reset with
+  Volume Down and retrieve only the three exact metadata paths before any
+  further Android boot.
+- TRY5 was booted after the status-0 install. It reset rapidly twice before the
+  user caught Motorola fastboot. Read-only metadata then showed current slot A
+  with five retries remaining; the bootloader still had a healthy two-slot
+  partition view. Recovery subsequently booted from slot B without re-arming or
+  changing either slot.
+- Recovery mounted metadata read-only. All three exact TRY5 paths were absent:
+  `bootloop-zygote-start`, `bootloop-zygote-restarted`, and `bootloop-logcat`.
+  `/metadata/vold` itself exists, so the destination parent is not the missing
+  prerequisite. Metadata was unmounted immediately.
+- This disproves the current zygote/linker-restart hypothesis for TRY5: init did
+  not reach the start of the `zygote-start` action. The next diagnostic must use
+  one bounded stage file updated at checkpoints from post-fs through
+  post-fs-data and BPF loading; do not add another zygote-only logger or return
+  to USB/pstore.
+
+## 2026-07-26 TRY6 pre-zygote stage diagnostic
+
+- Temporary `system/core/rootdir/init.rc` instrumentation overwrites the single
+  exact path `/metadata/vold/bootloop-stage` at 13 checkpoints: post-fs,
+  post-fs-data start, data-key installed, persist properties loaded, APEX and
+  KeyMint ready, user 0 initialized, classpath derived, odsign key done,
+  post-fs-data complete, BPF loader start/complete, BPF programs loaded, and
+  zygote start. It adds no service, executable, shell, USB path, logging
+  relocation, or policy broadening.
+- Fresh target-files archive: 2,614,933,941 bytes, SHA-256
+  `73ef0bf5366ab9ffc34ab17186eef2de3be363830b8ee1e591b484463603d953`;
+  ZIP integrity passes. Direct archive inspection confirms all stage writes,
+  the existing zygote restart/log copy, and compiled init permissions.
+- Exact installable TRY6 OTA:
+  `lineageos/out/target/product/odessa/lineage-23.2-20260726-BOOTLOOP-TRY6-UNOFFICIAL-odessa.zip`,
+  1,028,459,956 bytes, SHA-256
+  `9ee1e663d3e976fc6dde4d88ec4f99f29ce293ae07ed2114f1590f44794f0572`.
+  ZIP integrity and required A/B entries pass. Payload size is 1,028,452,662
+  bytes, SHA-256
+  `b5701d80032c293e074694edcb0efa952c6c5578bd8b10b91ffd6517cf70f368`;
+  its hash matches `payload_properties.txt`.
+- Direct payload extraction produced raw system image SHA-256
+  `a23efd753674599970606091efc434c9eac0e0d30176156811f3b36f35281fb3`.
+  Converting target-files' sparse `IMAGES/system.img` to raw yields the same hash
+  and a byte-for-byte `cmp` match. Exact payload filesystem inspection confirms
+  all 13 stages, secure USB properties, persistent logcat, and no zygote critical
+  window. TRY6 is approved for a controlled diagnostic sideload only after a new
+  explicit destructive authorization.
+- After explicit authorization, TRY6 installed from recovery B to target A.
+  Ignored recovery log `lineageos/.downloads/recovery-slotb-try6-20260726.log`,
+  SHA-256 `6554a410f6adec417c57d138333b8941e4177bcdd2a7ac3ac2b9d581c9932111`,
+  proves all three update actions succeeded, the update was applied, and final
+  status was 0. It may contain identifiers and must remain untracked/unquoted.
+- TRY6 exhausted slot A's retries and automatically fell back to B; B retained
+  seven retries. Recovery B mounted metadata read-only, but
+  `/metadata/vold/bootloop-stage` was absent. Metadata was unmounted.
+- Absence does not yet prove a pre-`post-fs` reset because init's regular-file
+  `write` builtin closes without `fsync`, and every attempt reset rapidly. TRY7
+  therefore adds a temporary `write_sync` init builtin that writes the marker,
+  fsyncs the file, and fsyncs its parent directory. Only the diagnostic markers
+  use it. The earliest marker now runs from device `on fs` immediately after the
+  early `mount_all`; another runs at the first line of platform `on post-fs`.
+  Existing later checkpoints use the same durable builtin. No production
+  behaviour should be inferred until this durability-correct diagnostic runs.
+- TRY7 static `git diff --check` passes in system core, platform policy, and the
+  common device tree. The new init builtin and rc syntax still require a focused
+  compile/host-init-verifier gate before target-files packaging.
+- The first focused TRY7 compile failed only because this branch disables
+  implicit `unique_fd` to integer conversion; both `fsync` calls now use the
+  explicit `.get()` accessor. `m -j8 init host_init_verifier` subsequently
+  completed successfully. The full target-files/boot/vendor/system/AVB package
+  still requires regeneration and exact inspection before any TRY7 OTA.
+- Fresh TRY7 target-files archive: 2,614,937,112 bytes, SHA-256
+  `a7c0375db022f036f70d2faa69f51b20bcfa11bad8c73da15d54454c999e2544`;
+  ZIP integrity passes. The packaged normal second-stage and recovery init
+  binaries contain `write_sync`; the deliberately minimal first-stage ramdisk
+  init does not parse these system/vendor rc actions and need not contain it.
+  Packaged system and vendor rc contain the early and later durable stage calls.
+- The first TRY7 OTA generation failed only during final ZIP metadata insertion
+  because `/tmp` was full. No output ZIP was produced. Removing the agent-created
+  TRY5/TRY6 verification directories freed about 10.3 GiB; source and
+  target-files were unchanged. Regeneration from the same target-files archive
+  then succeeded.
+- Exact TRY7 OTA:
+  `lineageos/out/target/product/odessa/lineage-23.2-20260726-BOOTLOOP-TRY7-UNOFFICIAL-odessa.zip`,
+  1,028,460,874 bytes, SHA-256
+  `c0dc7772f01d2b59d83139617433d97c47e318f797e54208ae83d3e3e5d09596`;
+  ZIP integrity and required A/B entries pass. Payload size is 1,028,453,580
+  bytes, SHA-256
+  `130f74d3ca797802d33a548ecfa1cde1d8ee2268b75b1da3cb82bd23f43e201a`,
+  matching `payload_properties.txt`.
+- Exact payload images: boot
+  `9edfc27c2a9472b9b25dbbf9c49ecfc05ee0de688697b2485b31e71110fd498b`,
+  raw system
+  `0b54c93ca29872d6efb47c0b6348261d0b98b4e463fd2c46bd1122e1d85fa32e`,
+  vendor
+  `54cfa31c9fb5dea59fdeb9e23c4390c99948ca1d84b8b3995130d89a647e910d`.
+  Each is byte-identical to the corresponding target-files image after sparse
+  system conversion. Direct filesystem/ramdisk inspection proves the exact
+  payload has the `write_sync` implementation and every intended rc call. TRY7
+  is approved for a controlled diagnostic sideload after explicit authorization.
+- After explicit authorization, TRY7 installed from recovery B to target A with
+  status 0. Ignored recovery log
+  `lineageos/.downloads/recovery-slotb-try7-20260726.log`, SHA-256
+  `833ceb62c0759b35647e2b5f51178ec6aa010b55cb2a3d5d640a5690c615432e`,
+  proves all OTA actions succeeded. It may contain identifiers and must remain
+  untracked/unquoted.
+- TRY7 reset twice; slot A remained selected, bootable, and had five retries.
+  Recovery B then mounted metadata read-only, but even the durable stage file
+  was absent. Metadata was immediately unmounted.
+- Bootstrap review confirms first-stage ramdisk init intentionally does not
+  contain the new builtin. After first-stage mounts it explicitly execs
+  `/system/bin/init` for SELinux setup, which then execs the same system binary
+  for second stage. The exact payload's system init contains `write_sync`, so it
+  was not an unknown-command failure. Absence localizes the gap before rc action
+  execution, but not yet between first-stage mounts, SELinux setup, second-stage
+  entry, and boot-script parsing.
+- Temporary TRY8 code adds direct fsynced markers independent of rc parsing at
+  exactly those four transitions: `first-stage-mounts-complete`,
+  `selinux-setup-complete`, `second-stage-main`, and `boot-scripts-loaded`.
+  `WriteFileSync` is shared by the diagnostic builtin and direct markers and
+  fsyncs both the file and parent directory. Marker failures log and return; they
+  are not fatal. Static `git diff --check` passes; focused init/first-stage/host
+  compilation is still required before packaging.
+- Focused `m -j8 init init_first_stage host_init_verifier` passed. Direct string
+  inspection of the focused binaries found the first-stage mount marker in
+  ramdisk init and the SELinux/second-stage/script markers plus `write_sync` in
+  system init.
+- Fresh TRY8 target-files archive: 2,614,937,918 bytes, SHA-256
+  `4363aa046e000f7d07d865d2a173a198498314977e3901218d130840269fc513`;
+  ZIP integrity passes. Packaged binary and rc inspection confirms all direct
+  and action-based markers.
+- Exact TRY8 OTA:
+  `lineageos/out/target/product/odessa/lineage-23.2-20260726-BOOTLOOP-TRY8-UNOFFICIAL-odessa.zip`,
+  1,028,478,895 bytes, SHA-256
+  `2bc9ffae66dedc07108da7307081ef6e394b273bd997d4378ec04cd7bb15a7ee`;
+  ZIP integrity passes. Payload size is 1,028,471,601 bytes, SHA-256
+  `7f0b0c6158400759eed62b3fb02f8cfe2e9f58c7a308d2acf7d9ea21b289d3ef`,
+  matching `payload_properties.txt`.
+- Exact payload boot image SHA-256 is
+  `6236a4a1413a818f51d803b1451599733ced901933c55c14dd47aaa6b03fc5e8`;
+  raw system is
+  `199a353930a8827de080effd61150c21b952f5c487865e6cd88c07e37a09c94a`.
+  They are byte-identical to target-files boot and sparse-to-raw system.
+  Unpacking the exact payload again proves the first-stage and later markers are
+  in the executable binaries. TRY8 is approved for one controlled diagnostic
+  sideload after explicit authorization.
+- After explicit authorization, TRY8 installed from recovery B to target A with
+  status 0. Ignored recovery log
+  `lineageos/.downloads/recovery-slotb-try8-20260726.log`, SHA-256
+  `ffca11679ddf7f9685939091b20cf58e0a6b51f291b3327419d16ac0784bce66`,
+  proves all OTA actions succeeded. It may contain identifiers and must remain
+  untracked/unquoted.
+- TRY8 exhausted slot A and fell back to B. Recovery B again found no
+  `/metadata/vold/bootloop-stage`, then unmounted metadata. The exact payload
+  contains the direct first-stage marker, so normal `DoFirstStageMount()` did not
+  reach completion.
+- Source inspection shows `DoCreateDevices()` mounts metadata before creating
+  logical partitions, then `DoFirstStageMount()` mounts system-as-root and the
+  remaining first-stage partitions. Temporary TRY9 instrumentation records
+  device/logical setup success or failure, system mount start/failure/success,
+  each remaining partition mount start/failure/success, and the outer mount
+  failure. Because metadata is available before these operations, the exact
+  failing first-stage step should now survive. Static diff checks pass; focused
+  first-stage compilation remains required.
+- The user built a pre-correction TRY9 target-files archive: 2,614,941,963 bytes,
+  SHA-256 `2ce942af970158f9693d8fea9a2cb8d24843bd8bf8f716220d31c9a52d982ca2`;
+  ZIP integrity and packaged markers passed. It is **not approved**: the outer
+  `first-stage-mount-failed` marker would overwrite the specific system or
+  partition failure. That one outer marker has now been removed from source, so
+  the archive is stale and must not be used to generate an OTA.
+- Full continuation guide:
+  `docs/handoff-20260726-first-stage-mount.md`. The immediate next step is to
+  rebuild `init_first_stage` and `target-files-package` from the corrected
+  source, then inspect and generate TRY9 from that exact new archive. Current
+  phone state is slot-B Recovery with ADB enabled, 100% battery, metadata
+  unmounted, and slot A unbootable after TRY8.
