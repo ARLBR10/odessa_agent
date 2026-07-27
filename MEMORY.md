@@ -13,12 +13,18 @@ re-verify device state before any device-changing command.
   `/metadata/bootstat/persist.sys.boot.reason` = `reboot,bpfloader-failed`. Android 16's
   `netbpfload` hard-requires kernel ≥ 5.4 (25Q2); odessa has 4.14.336. Recovery boots
   fine; full Android has never reached zygote on the current kernel.
-- **Chosen fix:** BPF backport in `kernel/motorola/sm6150` branch
-  `wip/bpf-backport-4.14.336`, modeled on the shared LineageOS msm-4.14 effort
-  (xiaomi sm6125/sm6150, oneplus sm8150 at 4.14.357-openela). Baseline gap closed,
-  backport applied conflict-free, 26/32 `kernel/bpf` objects compile. Remaining
-  blocker: `devmap.c` needs 5.x XDP infrastructure — port that portion
-  (`net/core/dev.c`, `include/linux/netdevice.h`) from the reference next.
+- **Chosen fix (user decision, 2026-07-27):** stay on 4.14.x — (1) bump to the
+  current OpenELA stable level, then (2) apply the *full* BPF backport modelled on
+  `LineageOS/android_kernel_xiaomi_sm6150` (same SM7150 silicon, officially
+  supported on LineageOS 23.2). Step 1 is **done**: branch `wip/openela-4.14.357`
+  is at **4.14.357-openela** (21 incremental merges, one per stable release,
+  2042 commits / 1595 files / +33,089 / -12,307 over `lineage-23.2`), not yet
+  compiled. Note the current OpenELA release is .357, not .356, and .357 is what
+  both reference trees use. Step 2 is next; doing it *after* the bump means the
+  reference's 22.2→23.2 delta applies to the same tree shape the reference had,
+  including the XDP infrastructure `devmap.c` needs.
+  The earlier partial branch `wip/bpf-backport-4.14.336` (26/32 `kernel/bpf`
+  objects compiling, blocked on `devmap.c`) is superseded but kept for reference.
   Only after the kernel links and ctx offsets are checked: set
   `ro.bpf.kver_override=5.10.239` (never without the backport) and enable
   `CONFIG_BPF_UNPRIV_DEFAULT_OFF`.
@@ -53,6 +59,22 @@ re-verify device state before any device-changing command.
 - Host stability is suspect (Clang SIGSEGV, Rust LLVM SIGSEGV, single-bit Btrfs
   dirent corruption, all with clean disk counters). Do not trust long unattended
   builds until a memtest86+ run passes.
+- **This `repo` checkout is a shallow clone** (269 boundary commits in
+  `$(git rev-parse --git-common-dir)/shallow`). A fetched upstream will look
+  re-rooted and share no merge base, and `git replace --graft` will silently do
+  nothing (it cannot cross a shallow boundary — `git cat-file` honours the graft
+  but `git log`/`rev-list` do not). Deepen instead:
+  `git fetch --shallow-exclude=<older-tag> <remote> <branch>` then
+  `git fetch --deepen=1 ...` to attach the boundary commit. Do not conclude an
+  upstream "publishes truncated history" before checking `shallow`.
+- **When a merge prints `Resolved '<file>' using previous resolution`, read the
+  result.** rerere replays a resolution recorded in a different context and never
+  re-justifies it. (At 4.14.346 it produced a `net/core/filter.c` that looked like
+  a dropped hunk; it was correct, but only inspection established that.)
+- **Resolving stable-merge conflicts: the LineageOS xiaomi sm6125/sm6150 trees are
+  the oracle.** They merged the same OpenELA releases into an msm-4.14 vendor tree
+  with the same divergences, so `git show reference/sm6125-lineage-23.2:<path>`
+  shows how the same conflict was resolved on hardware-validated code.
 - Tools in `tools/`: `capture-gpt.sh` + `decode-gpt.py` (GPT attribute diffing),
   `watch-usb.sh` (raw USB enumeration watcher). `/proc/cmdline` contains serial/MACs —
   redact before sharing.
@@ -129,3 +151,8 @@ re-verify device state before any device-changing command.
   (BTF/DEVMAP_HASH missing). BPF backport scoped and started
   (`wip/bpf-backport-4.14.336`); 26/32 objects compile; `devmap.c` XDP infra is the
   next port. Reference: `reference/sm6125-lineage-23.2` in the kernel repo.
+  Strategy then fixed by the user: OpenELA bump first, then the full BPF backport
+  from xiaomi sm6150. Bump completed on `wip/openela-4.14.357` (4.14.336 →
+  4.14.357-openela, 21 merges, 13 files hand-resolved). Remotes added to the kernel
+  repo: `openela` (github.com/openela/kernel-lts) and `xiaomi6150`. Full conflict
+  table and the shallow-clone diagnosis are in `journals/27-07-2026.md`.
