@@ -9,6 +9,10 @@ recovery*.log
 gpt-before/
 gpt-after/
 gpt-*.txt
+gptcap-*/
+dmesg-*.txt
+logcat-*.txt
+usb-watch-*-*.log
 
 # Stock firmware package and the third-party Windows flashing helper. Untrusted
 # distributor binaries; never commit or execute them.
