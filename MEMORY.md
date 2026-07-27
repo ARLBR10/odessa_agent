@@ -1634,3 +1634,496 @@ Full continuation guide: `docs/handoff-20260726-bootloop-observability.md`.
   source, then inspect and generate TRY9 from that exact new archive. Current
   phone state is slot-B Recovery with ADB enabled, 100% battery, metadata
   unmounted, and slot A unbootable after TRY8.
+
+## 2026-07-26 TRY9 metadata channel proof and verified artifact
+
+- Root concern found before building: `RecordBootloopStage()` called
+  `mkdir_recursive("/metadata/vold")` unconditionally. `first_stage_mount.cpp`
+  `DoCreateDevices()` ignores a failed `/metadata` mount (the `MountPartition`
+  result is only used to gate `CopyDsuAvbKeys()`), and the boot ramdisk ships a
+  `/metadata` directory. If that mount failed, every marker was created on the
+  initramfs, `fsync()` succeeded on ramfs, and the evidence was freed with the
+  ramdisk. This alone explains TRY5-TRY8 returning nothing and would have made
+  TRY9 return nothing too.
+- Fix applied to the temporary diagnostics: `RecordBootloopStage()` now compares
+  `stat("/").st_dev` with `stat("/metadata").st_dev` and refuses to write unless
+  metadata is a distinct mounted filesystem. `DoCreateDevices()` records
+  `first-stage-metadata-mounted` on success and
+  `first-stage-metadata-mount-failed` / `first-stage-metadata-absent-from-fstab`
+  otherwise. `sys/stat.h` was added to `system/core/init/util.cpp`.
+- The generic outer `first-stage-mount-failed` marker is confirmed absent from
+  every built artifact; only the per-partition `first-stage-mount-failed:` form
+  remains.
+- Verified TRY9 target-files archive:
+
+```text
+size: 2,614,944,502 bytes
+SHA-256: 59f6c5145f7848b4b7c3ca264b05be3bc5ea9758db8fd1dbcc1dabdeea1489f6
+```
+
+- Verified TRY9 OTA
+  `lineageos/out/target/product/odessa/lineage-23.2-20260726-BOOTLOOP-TRY9-UNOFFICIAL-odessa.zip`:
+
+```text
+size: 1,028,483,153 bytes
+SHA-256: 171f5b413014301bf69b3dfaca27b4793f8bec9de6da8e5f972d21f88fd996a6
+payload size: 1,028,475,859 bytes
+payload SHA-256: aa8c0f34b69bba8b0212b1165d658026b829614ed462d0d70fc71086e12b338e
+```
+
+  ZIP integrity passes, required A/B entries are present, and the payload's
+  base64 SHA-256 matches `payload_properties.txt` `FILE_HASH` exactly.
+- Provenance chain closed: payload `boot.img` SHA-256
+  `6618b642c503ca12995a77d2e92872757761bacde0e7717a7015b24bade74269` is
+  byte-identical to target-files `IMAGES/boot.img`, and its unpacked ramdisk
+  `init` SHA-256 `964a3d79e0ceb44d6626eaed72bd4dd56c9177c7e2fb0b9acebc1c00c5e1d069`
+  matches both `BOOT/RAMDISK/init` and the freshly built
+  `out/target/product/odessa/ramdisk/init`. All 13 markers and the guard string
+  are present in that exact payload binary.
+- `ota_from_target_files` must not be given `--output_metadata_path /dev/null`;
+  the tool appends `.pb` and fails at the final metadata write with
+  `PermissionError: /dev/null.pb`. Omit the flag.
+- New observation to test, not yet a finding: in the shipping ramdisk
+  `fstab.qcom`, `/metadata` is the only entry using `/dev/block/by-name/` while
+  every other entry uses `/dev/block/bootdevice/by-name/`. If that symlink does
+  not resolve during first-stage device init, the silently ignored mount failure
+  above follows. Investigate this first if TRY9 still returns no marker.
+- Unexplained correlation to keep open: every build that writes to `/metadata`
+  early (TRY3 onward) loops in about 2-3 s with no bootloader unlock warning,
+  while TRY2, which does not, held the logo about 20-37 s and did show the
+  warning. The user reconfirmed the fast signature on 2026-07-26. TRY3 was
+  already rejected once for changing boot behaviour; that precedent was never
+  applied to TRY4-TRY9.
+- TRY9 has not been installed or booted. The phone remains in slot-B Lineage
+  Recovery; slot A is unbootable after TRY8.
+
+## 2026-07-26 BREAKTHROUGH: the boot dies at the BPF loader, not in first-stage mount
+
+- TRY9 installed from recovery B to target A with `Install completed with status 0`,
+  `source_slot: B`, `target_slot: A`, and `DownloadAction`,
+  `FilesystemVerifierAction`, `PostinstallRunnerAction` all `kSuccess`. Ignored
+  recovery log `lineageos/.downloads/recovery-slotb-try9-20260726.log`, SHA-256
+  `127f4b6672b2501d71068d7efe2ad85be06389cf998df4aa7369478337a1db3e`. The
+  `Failed to submit transaction in checkpointing` errors are pre-existing noise:
+  130 in TRY7, 128 in TRY8, 130 in TRY9, all with status 0.
+- After the slot-A boot test, `/metadata/vold/bootloop-stage` **exists** and
+  contains exactly `bpfloader-start` (15 bytes). This is the first non-empty
+  stage result in the entire TRY5-TRY9 series.
+- `bpfloader-start` is written by temporary instrumentation at the first line of
+  `on load-bpf-programs` in `system/core/rootdir/init.rc`. The next marker,
+  `bpfloader-complete`, is written immediately after `exec_start bpfloader`.
+  **The boot therefore dies at `exec_start bpfloader`.**
+- This overturns the TRY8 conclusion. First-stage mounting, SELinux setup,
+  second-stage entry, boot-script parsing, `post-fs`, and the whole of
+  `post-fs-data` (data key, persist props, APEX/KeyMint, `init_user0`,
+  classpath, odsign, `verity_update_state`) all complete. It also explains TRY5:
+  `zygote-start` was never reached because BPF loading precedes it.
+- Provenance: the file's mtime is a real 2026 date, and recovery's clock is
+  bogus (`1970-01-14`), so full Android wrote it. Only slot-A builds TRY6-TRY9
+  write this path, and TRY6, TRY7 and TRY8 were each verified absent after their
+  own runs, so TRY9 wrote it.
+- Honest caveat, not yet resolved: the recorded mtime is about 32 minutes behind
+  host wall-clock for the observed boot attempts. The device RTC has not synced
+  since it last booted fully, so the offset is plausible but unverified. The
+  contradiction with TRY6-TRY8 producing nothing is also not fully explained;
+  do not treat the earlier "dies before post-fs" conclusion as merely a
+  measurement artifact until that is understood.
+- Prime suspect: Android 16's BPF loader against Linux 4.14.336. The built
+  kernel config has `CONFIG_BPF`, `CONFIG_BPF_SYSCALL`, `CONFIG_BPF_JIT`,
+  `CONFIG_BPF_JIT_ALWAYS_ON`, `CONFIG_BPF_EVENTS`, `CONFIG_CGROUP_BPF` and
+  `CONFIG_NET_CLS_BPF`, but **`CONFIG_DEBUG_INFO_BTF` does not exist in 4.14**
+  (BTF arrived in 5.2), and `CONFIG_NET_ACT_BPF` and `CONFIG_BPF_STREAM_PARSER`
+  are unset. Modern `netbpfload`/`bpfloader` requires BPF features and program
+  types that a 4.14 kernel may not provide.
+- Next investigation is host-side and costs no slot cycle: identify which
+  bpfloader binary the build ships, which `.o` programs it loads, and which of
+  them 4.14 cannot support. Do not add another init marker build for this.
+- Device state after the run: both slots were re-armed by Motorola ABL's
+  "No bootable A/B slot. Failed to boot Linux, falling back to fastboot"
+  fallback. Verified bootloader state afterwards was current slot A, A bootable
+  with 5 retries, B bootable with 7 retries, neither slot successful,
+  `securestate: flashing_unlocked`. Nothing was wiped. Recovery on slot A boots
+  with ADB after accepting the authorization prompt; metadata was mounted
+  read-only, only the exact stage path was read, and it was unmounted
+  immediately.
+
+## 2026-07-26 Root cause of the bpfloader bootloop: kernel 4.14 vs Android 16 BPF
+
+Host-side source analysis only. No device commands were run. Nothing below has
+been proven by a boot yet.
+
+- The `bpfloader` service init starts is **not** `/system/bin/bpfloader`. The
+  platform script
+  `packages/modules/Connectivity/bpf/loader/netbpfload.rc:12` defines
+  `service bpfloader /system/bin/false`, and the Tethering APEX's
+  `netbpfload.35rc:3` overrides it with
+  `/apex/com.android.tethering/bin/netbpfload` (`override` at
+  `netbpfload.35rc:69`). That service carries
+  `reboot_on_failure reboot,bpfloader-failed` (`netbpfload.35rc:68`), so any
+  non-zero exit from `netbpfload` reboots the device immediately, which matches
+  the observed 2-3 s loop.
+- `netbpfload` computes `api_level_full` from `ro.build.version.sdk_full`
+  (`36.1` in the built `system/build.prop`) and from the `# 2025 4 36 1 0 #`
+  header of `/system/etc/init/netbpfload.rc`, giving `3610`
+  (`packages/modules/Connectivity/bpf/headers/include/bpf/BpfUtils.h:45-76`).
+  So `isAtLeastV`, `isAtLeast25Q2` and `isAtLeast25Q4` are all true.
+- **Root cause:**
+  `packages/modules/Connectivity/bpf/loader/NetBpfLoad.cpp:1620-1625`
+  `if (isAtLeastV && !isAtLeastKernelVersion(4, 19)) { ALOGE("Android V requires kernel 4.19."); return 5; }`
+  The device kernel is 4.14.336, so `netbpfload` exits 5 before loading anything.
+  The very next gate, `NetBpfLoad.cpp:1627-1632`, requires kernel 5.4 for 25Q2+.
+- Android's minimum kernel per release: 4.9 for S/T, **4.14 for U (LineageOS 21)**,
+  **4.19 for V (LineageOS 22)**, **5.4 for 25Q2 / Android 16 (LineageOS 23)**.
+  LineageOS 21 is the newest branch a stock 4.14 kernel satisfies unmodified.
+- LineageOS's sanctioned answer is `ro.bpf.kver_override`, present in all three
+  loaders in this checkout:
+  `packages/modules/Connectivity/bpf/headers/include/bpf/KernelUtils.h:31-42`
+  (LineageOS commit `75e4580fc6`, "bpf: Allow overriding kernel version",
+  tested on "sm8150 device based on 4.14 kernel with 5.4 bpf backported"),
+  `packages/modules/UprobeStats/src/bpf/headers/include/bpf/KernelUtils.h:30-45`,
+  and `system/bpf/loader/bpfloader.rs` `kernel_version()`.
+  LineageOS **abandoned** the alternative of relaxing the loader's checks
+  (Gerrit topic `legacy-bpf-compat`, changes 433516/433517 and the
+  `android_system_bpf` 4.9-T series, all ABANDONED on `lineage-23.0`).
+- The override is a claim about backported kernel features, not a bypass. Both
+  LineageOS 4.14 devices that ship it also ship a full BPF backport:
+  - `LineageOS/android_kernel_xiaomi_sm6125` `lineage-23.2` is 4.14.357-openela
+    and now contains `kernel/bpf/btf.c`, `ringbuf.c`, `bpf_local_storage.c`,
+    `bpf_inode_storage.c`, `trampoline.c`, `bpf_struct_ops.c`, `bpf_iter.c`,
+    `cpumap.c`, `queue_stack_maps.c`, `sysfs_btf.c` and more. Its device tree
+    `android_device_xiaomi_sm6125-common/lineage-23.2/product.prop` sets
+    `ro.bpf.kver_override=5.10.239` (`5.4.299` on `lineage-23.0`).
+  - `LineageOS/android_kernel_oneplus_sm8150` `lineage-23.2` is the same shape
+    (4.14.357-openela, 120 commits touching `kernel/bpf/btf.c` alone);
+    `android_device_oneplus_sm8150-common/lineage-23.2/product.prop` also sets
+    `ro.bpf.kver_override=5.10.239`.
+  - `git compare lineage-22.2...lineage-23.2` on the sm6125 kernel is **3090
+    commits ahead**, overwhelmingly upstream BPF backports.
+- `kernel/motorola/sm6150` at 4.14.336 has none of it. `kernel/bpf/` holds only
+  the stock 4.14 set (no `btf.c`, no `ringbuf.c`); `include/linux/btf.h` does not
+  exist; `include/uapi/linux/bpf.h` `enum bpf_cmd` stops at
+  `BPF_OBJ_GET_INFO_BY_FD` (no `BPF_BTF_LOAD`); `enum bpf_map_type` stops at
+  `BPF_MAP_TYPE_SOCKMAP` (no `DEVMAP_HASH`); `bpf_attr` has no `map_name` or
+  `prog_name`. The stale `reference/sm6125-lineage-22.2` branch fetched into this
+  repo is from before the backport and must not be used as the reference.
+- **Setting `ro.bpf.kver_override` alone on this kernel would not fix the boot;
+  it would only move the failure.** With the minimum viable value of 5.4:
+  - `NetBpfLoad.cpp:826-846` then takes the `isAtLeastKernelVersion(4, 19)` BTF
+    path and calls `btf__load_into_kernel()`, i.e. `BPF_BTF_LOAD`, which does not
+    exist before 4.18;
+  - `sanitizeMapType()` (`NetBpfLoad.cpp:808-818`) stops rewriting
+    `BPF_MAP_TYPE_DEVMAP_HASH` to `HASH` at 5.4, so `tether_dev_map`
+    (`bpf/progs/offload.c:791`) would be created with a map type the kernel does
+    not have;
+  - the 5.4 variants of the netd and offload programs would be selected and use
+    `skb->gso_segs`, `skb->gso_size`, `skb->sk` and `bpf_sk_fullsock()`
+    (`bpf/progs/netd.c:186-199`, `bpf/progs/offload.c:187-193`), none of which
+    exist in 4.14.
+  Each of those is another guaranteed non-zero exit and another reboot.
+- Cheap device-side confirmation available next time the phone is in recovery
+  with `/metadata` mounted read-only: `system/core/init/reboot.cpp:96-106`
+  persists the reboot reason to `LAST_REBOOT_REASON_FILE`, which
+  `system/core/libcutils/include/cutils/android_reboot.h:33-34` defines as
+  `/metadata/bootstat/persist.sys.boot.reason`. If that file names
+  `bpfloader-failed`, the diagnosis is confirmed end to end.
+- Two honest options, both requiring the user's decision:
+  1. Port the BPF backport from `LineageOS/android_kernel_xiaomi_sm6125`
+     `lineage-23.2` (closest analogue: also Qualcomm msm-4.14) into
+     `kernel/motorola/sm6150`, then set `ro.bpf.kver_override` to match. Bring the
+     kernel to 4.14.357-openela first to cut conflicts. Large kernel project,
+     only verifiable by booting hardware.
+  2. Retarget to LineageOS 21 (Android 14), the newest branch whose BPF loader
+     accepts an unmodified 4.14 kernel, and revisit 23.2 after the backport.
+
+## 2026-07-27 CONFIRMED END TO END: `reboot,bpfloader-failed`
+
+- Read-only from recovery on slot A, `/metadata/bootstat/persist.sys.boot.reason`
+  contains exactly `reboot,bpfloader-failed`, and
+  `/metadata/vold/bootloop-stage` still contains `bpfloader-start`. Metadata was
+  mounted read-only, only those two exact paths were read, and it was unmounted
+  immediately.
+- `reboot,bpfloader-failed` is the literal string from
+  `packages/modules/Connectivity/bpf/loader/netbpfload.35rc:68`
+  (`reboot_on_failure reboot,bpfloader-failed`). The bootloop cause is proven,
+  not inferred.
+- Independently verified in this checkout:
+  - `netbpfload.35rc:3` sets `service bpfloader /apex/com.android.tethering/bin/netbpfload`
+    with `override` at `:69`, so `exec_start bpfloader` runs the APEX loader, not
+    `/system/bin/bpfloader`;
+  - `NetBpfLoad.cpp` returns 5 when `isAtLeastV && !isAtLeastKernelVersion(4, 19)`,
+    and 6 when `isAtLeast25Q2 && !isAtLeastKernelVersion(5, 4)`;
+  - `out/target/product/odessa/obj/KERNEL_OBJ/include/generated/utsrelease.h`
+    is `"4.14.336-perf+"`;
+  - `ro.bpf.kver_override` exists in both
+    `packages/modules/Connectivity/bpf/headers/include/bpf/KernelUtils.h:38-40`
+    and `system/bpf/loader/bpfloader.rs:429`;
+  - the kernel lacks `kernel/bpf/btf.c`, `kernel/bpf/ringbuf.c` and
+    `include/linux/btf.h`, and its `uapi/linux/bpf.h` has zero occurrences of
+    `BPF_BTF_LOAD` or `BPF_MAP_TYPE_DEVMAP_HASH`.
+- Android kernel minimums: 4.14 for Android 14 (LineageOS 21), 4.19 for Android
+  15 (LineageOS 22), 5.4 for Android 16 / 25Q2 (LineageOS 23). **LineageOS 21 is
+  the newest branch an unmodified 4.14 kernel satisfies.**
+- `ro.bpf.kver_override` alone is NOT a fix and must not be shipped alone. It is
+  a claim that BPF features were backported. Setting it only advances the failure:
+  at >= 4.19 the loader takes the BTF path (`btf__load_into_kernel()` ->
+  `BPF_BTF_LOAD`, absent before 4.18); at >= 5.4 `sanitizeMapType()` stops
+  rewriting `BPF_MAP_TYPE_DEVMAP_HASH`; and the 5.4 program variants reference
+  `skb->gso_segs`, `skb->gso_size`, `skb->sk` and `bpf_sk_fullsock()`, none of
+  which exist in 4.14.
+- LineageOS abandoned the "relax the loader" approach: Gerrit topic
+  `legacy-bpf-compat` (changes 433516/433517) is ABANDONED on `lineage-23.0`.
+- Working precedent for 4.14 on LineageOS 23.2, both Qualcomm msm-4.14:
+  `LineageOS/android_kernel_xiaomi_sm6125` and
+  `LineageOS/android_kernel_oneplus_sm8150`, both at 4.14.357-openela with real
+  BPF backports (`btf.c`, `ringbuf.c`, `bpf_local_storage.c`, `trampoline.c`,
+  `bpf_struct_ops.c`, `bpf_iter.c`) and `ro.bpf.kver_override=5.10.239` in their
+  device trees. The sm6125 `lineage-22.2...lineage-23.2` delta is ~3090 commits,
+  overwhelmingly upstream BPF backports. The `reference/sm6125-lineage-22.2`
+  branch already present in the local kernel repo predates the backport and is
+  stale for this purpose.
+- Do not mark the bpfloader service non-critical: netd depends on the pinned
+  programs, so netd would crashloop and take system_server with it. The
+  `reboot_on_failure` exists because that failure is unrecoverable.
+- `CONFIG_BPF_UNPRIV_DEFAULT_OFF` is not set in the built kernel config. If a BPF
+  backport is undertaken, enable it then; 4.14's verifier lags badly on
+  Spectre-class hardening.
+
+## 2026-07-27 BPF backport scoping result: the port target is nearly pristine
+
+Host-only measurement, no builds, no device contact. Reference fetched as a
+blob-less partial clone into the existing kernel repo:
+`refs/remotes/reference/sm6125-lineage-23.2` from
+`https://github.com/LineageOS/android_kernel_xiaomi_sm6125.git`.
+
+- `reference/sm6125-lineage-22.2` is 4.14.356-openela-rc1 and has **none** of
+  `kernel/bpf/btf.c`, `ringbuf.c`, `bpf_local_storage.c`, `trampoline.c`,
+  `bpf_struct_ops.c`, `bpf_iter.c`, `include/linux/btf.h`.
+- `reference/sm6125-lineage-23.2` is 4.14.357-openela and has all of them.
+- 22.2 is a **strict ancestor** of 23.2 (0 commits the other way), so the
+  backport is exactly the 22.2 -> 23.2 delta on one tree.
+- Whole delta: 3084 non-merge commits, 1605 files, +144,402 / -35,999.
+- BPF-core subset: 1592 non-merge commits, 69-70 files,
+  **+56,087 / -9,887**. Of those 70 files, **29 already exist in
+  `kernel/motorola/sm6150` and 41 are new files** (new files cannot conflict).
+- **The decisive number:** our kernel's BPF area differs from sm6125's
+  *pre-backport* state by only **171 insertions / 52 deletions across 12 files**
+  (`arch/arm64/net/bpf_jit_comp.c`, `include/linux/bpf.h`,
+  `include/uapi/linux/bpf.h`, `kernel/bpf/{arraymap,core,hashtab,lpm_trie,
+  map_in_map,stackmap,syscall}.c`, `kernel/bpf/map_in_map.h`,
+  `net/core/filter.c`) — despite 22,748 commits in ours not in theirs and 3,844
+  in theirs not in ours. `include/linux/filter.h` and `include/linux/bpf-cgroup.h`
+  are byte-identical to the reference. BPF is core kernel code that vendor trees
+  barely touch, so the conflict surface is far smaller than the raw commit count
+  suggests.
+- Honest caveats on these numbers:
+  - The 1592/3084 split is approximate. Individual files carry mixed changes, so
+    a per-file diffstat of e.g. `net/core/dev.c` (+905/-174) or
+    `security/security.c` (+720/-107) is mostly the 356->357 stable bump and LSM
+    work, not BPF.
+  - `git rev-list` pathspec counts require `--full-history`; without it git's
+    history simplification reports 0 for paths introduced through merges.
+  - It is not yet established whether the BPF series depends on the
+    4.14.356/357 stable level. Our kernel is at 4.14.336.
+- Conclusion: feasible, and materially smaller than the raw "3090 commits"
+  figure implies. Not yet started; awaiting the user's go-ahead.
+- If undertaken: set `ro.bpf.kver_override` to match what is actually backported
+  (sm6125 and sm8150 both use `5.10.239`), and enable
+  `CONFIG_BPF_UNPRIV_DEFAULT_OFF`, which is currently unset.
+
+## 2026-07-27 stable-level question settled: no full 336->357 bump needed for BPF
+
+Host-only, no builds, no device contact, no tree modified.
+
+- The BPF-path delta 22.2 -> 23.2 was generated (71 files, 74,243 patch lines)
+  and tested with `git apply --check` against `kernel/motorola/sm6150` HEAD.
+  It fails on exactly **10 files**: `include/linux/bpf.h`,
+  `include/uapi/linux/bpf.h`, `kernel/bpf/{arraymap,core,hashtab,map_in_map,
+  stackmap,syscall}.c`, `kernel/bpf/map_in_map.h`, `net/core/filter.c`.
+  These are the same files as the known 171/52 divergence; nothing new failed.
+- Inspecting that divergence shows it is a **BPF baseline gap, not Motorola
+  vendor divergence**. The reference tree has and ours lacks:
+  `map_fd_put_ptr(struct bpf_map *, void *, bool need_defer)`,
+  `char name[BPF_OBJ_NAME_LEN]` in `struct bpf_map`, `load_time` + `name` in
+  `struct bpf_prog_aux`, and the `lpm_trie` `prefixlen > max_prefixlen` bounds
+  check. One is an explicit Android backport commit in the reference tree:
+  `6b3a3a549ab1 BACKPORT: bpf: Use char in prog and map name`.
+- Verified feature presence:
+  - ours (4.14.336): `BPF_OBJ_NAME_LEN`, `need_defer`, `BPF_BTF_LOAD`,
+    `BPF_MAP_TYPE_DEVMAP_HASH`, `bpf_sk_fullsock` all **absent**;
+  - reference pre-backport (4.14.356, lineage-22.2): `BPF_OBJ_NAME_LEN`
+    **present** in 3 files; `BPF_BTF_LOAD` and `BPF_MAP_TYPE_DEVMAP_HASH` still
+    absent (those arrive in 23.2).
+- **Answer: a full 4.14.336 -> 4.14.357 stable bump is NOT a prerequisite for
+  the BPF work.** The BPF-relevant portion of that stable gap is only
+  ~171 insertions / 52 deletions across 12 files. Close that small baseline gap
+  first, then the 23.2 backport applies to the same shape of tree the reference
+  had.
+- Recommended order if the port proceeds: (1) close the ~220-line BPF baseline
+  gap in the 12 files; (2) apply the 22.2 -> 23.2 BPF delta (69-71 files,
+  +56,087 / -9,887, of which 41 files are new and cannot conflict); (3) set
+  `ro.bpf.kver_override` to match and enable `CONFIG_BPF_UNPRIV_DEFAULT_OFF`;
+  (4) build kernel/boot/dtbo; (5) hardware boot test.
+- Remaining unquantified risk: only the BPF pathspec was apply-tested. The
+  backport commits also touch `net/core/dev.c`, `net/core/sock.c`,
+  `security/security.c`, `include/linux/lsm_hooks.h`, `init/Kconfig` and others
+  where the reference's diffs are dominated by non-BPF work. Integration effort
+  outside the BPF pathspec is real and not yet measured.
+
+## 2026-07-27 BPF backport attempt: partial, does NOT build yet
+
+Branch `wip/bpf-backport-4.14.336` in `kernel/motorola/sm6150`, 13 commits ahead
+of `lineage-23.2`, working tree clean, `git diff --check` clean. `lineage-23.2`
+is untouched. The uncommitted diagnostics in `system/core` (9 files),
+`system/sepolicy` (1) and `device/motorola/sm6150-common` (2) are intact.
+
+- **Baseline gap (the 171/52 divergence): CLOSED and verified.** 8 of 9 commits
+  cherry-picked with `-x` from `reference/sm6125-lineage-22.2`. Four items could
+  not be cherry-picked because they reached the reference through squashed
+  stable-merge imports between 4.14.337 and .356 and the local
+  `android-common/deprecated/android-4.14-stable` ref stops at .336; those 7
+  files were taken verbatim from the reference. After this, the 22.2 -> 23.2
+  BPF-path delta applied with **zero conflicts**.
+- **Technique: path-scoped tree import, not a 1592-commit cherry-pick.**
+  Justified because the delta applied conflict-free (a cherry-pick series would
+  produce a byte-identical tree), intermediate states are not meaningfully
+  bisectable (every one is a 4.14 kernel the loader still rejects), and each
+  commit carries non-BPF hunks that would conflict against 22,748 commits of
+  Motorola divergence.
+- The 5.4-not-5.10 scope update did **not** cause a trim: `verifier.c`,
+  `syscall.c` and `btf.c` are monolithic 5.10 files and "trimming to 5.4" would
+  mean hand-writing a different verifier. The 5.10 shape is a superset. The
+  update did stop the import of `net/xdp/`, `net/bpfilter/`, `bpf-lirc`,
+  `tcp_bpf.c`, `preload/` and `tools/`.
+- `CONFIG_BPF_UNPRIV_DEFAULT_OFF=y` added to
+  `arch/arm64/configs/vendor/odessa_defconfig` (line 219) and confirmed in the
+  generated `.config`.
+
+### Build status: FAILS. 26 of 32 `kernel/bpf` objects compile.
+
+Compiling: `core syscall verifier inode helpers tnum btf hashtab arraymap
+percpu_freelist bpf_lru_list lpm_trie map_in_map local_storage queue_stack_maps
+ringbuf disasm dispatcher trampoline bpf_local_storage cgroup bpf_iter map_iter
+task_iter prog_iter bpf_struct_ops`.
+
+Failing: `devmap.c` (**required** - `tether_dev_map` is `DEVMAP_HASH` with no
+`min_kver`; needs 5.x XDP infra: bulk `ndo_xdp_xmit`, `xdp_bulkq` in
+`struct net_device`, 4-arg `hlist_for_each_entry_rcu`, `__list_del_clearprev`),
+plus `cpumap.c`, `offload.c`, `net_namespace.c`, `stackmap.c`,
+`reuseport_array.c`. The latter four are small; `cpumap`/`offload` are not
+required. **`devmap.c` is the real remaining blocker.** Beyond `kernel/bpf`,
+`net/core/filter.c`, `kernel/trace/bpf_trace.c`, `security/bpf/` and the
+whole-kernel link have never been exercised.
+
+### Independently verified by the main agent
+
+- The reference tree `sm6125-lineage-23.2` has a **genuine defect**: its
+  `include/linux/vmalloc.h` defines `VM_LOWMEM 0x00000100` (line 24) **and**
+  `VM_FLUSH_RESET_PERMS 0x00000100` (line 29) - the same bit. Copying it would
+  corrupt Qualcomm VM_LOWMEM tracking on every JIT allocation. The port
+  correctly did not copy it and made `set_vm_flush_reset_perms()` a documented
+  no-op. Do not "fix" this by taking the reference's header.
+- Import faithfulness: `include/linux/bpf.h`, `include/uapi/linux/bpf.h`,
+  `include/linux/btf.h`, `include/linux/filter.h` and `net/core/filter.c` are
+  **byte-identical** to the reference. `kernel/bpf` differs by 967/945 across 20
+  files, which is the deliberate 4.14 adaptation.
+- The flagged context-offset risk is substantially mitigated by design:
+  `bpf_convert_ctx_access()` uses `bpf_target_off(struct sk_buff, ...)`, which
+  recomputes offsets from this tree's own struct definitions rather than
+  hardcoding them (53 such uses). Residual risk is limited to fields whose type
+  or bitfield packing differs between trees, most of which would fail to
+  compile. This is mitigation, not proof.
+
+### Documented functional gaps (deliberate, not hidden stubs)
+
+`perf_event_bpf_event()`/`perf_event_ksymbol()` are no-ops (perf shows
+unresolved JIT addresses); `register/modify/unregister_ftrace_direct()` return
+`-ENODEV` so BPF trampolines cannot attach; `bpf_xdp_link_attach()` returns
+`-EOPNOTSUPP` (XDP still attaches the 5.4 way via `dev_change_xdp_fd()`);
+`call_rcu_tasks_trace()` maps to `call_rcu()`; `populate_bpffs()` is a no-op.
+
+### Unproven
+
+Everything past compilation: the whole-kernel link, whether the 5.10 verifier
+correctly verifies programs against 4.14 `struct sk_buff`/`struct sock` layouts,
+and whether the device boots. **Do not set `ro.bpf.kver_override` until the
+kernel links and the context-access offsets are checked.**
+
+## 2026-07-27 kernel strategy research: what xiaomi_sm6150 did, and why 5.10/6.x is not a path
+
+Host-only research, no builds, no device contact, no tree modified.
+
+### What `LineageOS/android_kernel_xiaomi_sm6150` did (verified)
+
+- Branches: 17.1, 20, 21, 22.1, 22.2, 23.0, 23.1, 23.2. `lineage-22.2` is
+  **4.14.356-openela-rc1** and has no BPF backport (same as sm6125 22.2).
+  `lineage-23.2` (tip `e03e5ba22586be70673afb5d3c3f70510524e658`, updated
+  2026-07-04) is **4.14.357-openela** with the full 5.10-era BPF backport:
+  `btf.c` (147 KB, kflag-era), `ringbuf.c`, `trampoline.c`, `bpf_struct_ops.c`,
+  `bpf_iter.c`, `bpf_local_storage.c`, `bpf_inode_storage.c`, `local_storage.c`,
+  `cpumap.c`, **`devmap.c`**, `queue_stack_maps.c`, `sysfs_btf.c`,
+  `reuseport_array.c`, `net_namespace.c`, `offload.c`, `task/prog/map_iter.c`,
+  and a 379 KB `verifier.c`.
+- **Every file in its `kernel/bpf/` is byte-identical (same git blob SHA) to
+  `reference/sm6125-lineage-23.2`** — verified locally with `git ls-tree`
+  against the GitHub API blob IDs. The backport is one coordinated LineageOS
+  msm-4.14 effort shared across xiaomi sm6125, xiaomi sm6150, and oneplus
+  sm8150. Our sm6125 reference is therefore interchangeable with xiaomi sm6150
+  for the BPF core; no second fetch is needed for `kernel/bpf/` itself.
+- `LineageOS/android_device_xiaomi_sm6150-common/lineage-23.2/product.prop`
+  sets `ro.bpf.kver_override=5.10.239`, identical to sm6125/sm8150.
+- This is the **same SoC family as odessa**: the xiaomi sm6150 platform covers
+  tucana/toco (SM7150-AB Snapdragon 730G, Adreno 618) and davinci (SD730).
+  The LineageOS wiki lists **tucana as officially supported on LineageOS 23.2
+  (Android 16), kernel 4.14** (previously 22.2 and 23.0). So the
+  4.14+OpenELA+BPF-backport path is officially shipped and hardware-validated
+  on the same silicon odessa uses.
+- They did **not** upgrade to 5.10 or 6.x.
+
+### OpenELA facts
+
+- OpenELA `kernel-lts` `linux-4.14.y` continues upstream 4.14 after its Jan
+  2024 EOL at 4.14.336, following upstream stable rules; current releases are
+  4.14.356/357-openela (2026). Tags carry the `-openela` suffix.
+- **OpenELA alone does not fix the bootloop.** 4.14.357-openela still lacks
+  BTF/DEVMAP_HASH/ringbuf; it only extends the stable patch level. The working
+  recipe is OpenELA **plus** the BPF backport **plus** `ro.bpf.kver_override`.
+  Taking our tree from 4.14.336 to 4.14.357-openela is optional for the BPF
+  work (MEMORY 2026-07-27 proved the BPF-relevant stable gap is ~171/52 lines,
+  already closed in `wip/bpf-backport-4.14.336`), but worthwhile for security
+  and for matching the reference trees' baseline.
+
+### Why 5.10/6.x rebase is rejected for this device
+
+- No msm-5.4/5.10/6.x BSP exists for SM6150/SM7150: Qualcomm never shipped one
+  for this platform (first msm-5.4 was SM8350/lahaina); no LineageOS, Xiaomi,
+  or Motorola 5.x tree exists for it. A rebase would mean porting the entire
+  vendor stack (sdmmagpie DT, KGSL/Adreno 618, camera CAMX/CHI-CDK ioctls,
+  audio/display techpacks, modem/IPA, qcacld WLAN, fingerprint, touchscreen,
+  Motorola drivers) with no base tree and no precedent on any commercial
+  msm-4.14 device.
+- Odessa's Android-10-generation (API 29) vendor blobs are built against the
+  4.14 kernel UAPI; a major-version jump risks silent ABI breakage that cannot
+  be fixed without blob sources. Every LineageOS msm-4.14 platform chose
+  backport over rebase for this reason.
+- VINTF does not require a newer kernel: the build is already COMPATIBLE at
+  FCM 6 with 4.14.336 (proven 2026-07-18). AOSP's android-common table lists
+  android12-5.10 through android16-6.12 as Android-16-compatible ACK branches;
+  the **only** component forcing a kernel change on odessa is the BPF loader's
+  feature set.
+- The only real SM7150 6.x work is `sm7150-mainline` (postmarketOS, now
+  6.18-era) and LineageOS's experimental `android_device_xiaomi_mi7150-mainline`
+  (U-Boot boot stack, permissive SELinux, no Android vendor drivers). It is a
+  separate architecture, not a vendor-kernel rebase; keep it as research input
+  only, per the standing decision.
+- Android 16's launch GKI is 6.12; 5.10 remains supported only as an older
+  upgrade branch. Neither changes the conclusion.
+
+### Decision-relevant conclusion
+
+Continue `wip/bpf-backport-4.14.336` (Option A). The remaining `devmap.c`
+build blocker is solved in both reference trees: their `devmap.c` builds
+because the reference delta also carries the 5.x XDP infrastructure
+(`net/core/dev.c`, `include/linux/netdevice.h` — the "outside the BPF
+pathspec" integration flagged 2026-07-27). Port that XDP-infra portion next.
+If the backport ultimately fails, the fallback is LineageOS 21 (Android 14),
+the newest branch an unmodified 4.14 kernel satisfies — not a 5.10/6.x rebase.
