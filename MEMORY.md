@@ -16,18 +16,25 @@ re-verify device state before any device-changing command.
 - **Chosen fix (user decision, 2026-07-27):** stay on 4.14.x — (1) bump to the
   current OpenELA stable level, then (2) apply the *full* BPF backport modelled on
   `LineageOS/android_kernel_xiaomi_sm6150` (same SM7150 silicon, officially
-  supported on LineageOS 23.2). Step 1 is **done**: branch `wip/openela-4.14.357`
-  is at **4.14.357-openela** (21 incremental merges, one per stable release,
-  2042 commits / 1595 files / +33,089 / -12,307 over `lineage-23.2`), not yet
-  compiled. Note the current OpenELA release is .357, not .356, and .357 is what
-  both reference trees use. Step 2 is next; doing it *after* the bump means the
-  reference's 22.2→23.2 delta applies to the same tree shape the reference had,
-  including the XDP infrastructure `devmap.c` needs.
-  The earlier partial branch `wip/bpf-backport-4.14.336` (26/32 `kernel/bpf`
-  objects compiling, blocked on `devmap.c`) is superseded but kept for reference.
-  Only after the kernel links and ctx offsets are checked: set
-  `ro.bpf.kver_override=5.10.239` (never without the backport) and enable
-  `CONFIG_BPF_UNPRIV_DEFAULT_OFF`.
+  supported on LineageOS 23.2). The current OpenELA release is **.357**, not .356,
+  and .357 is what both reference trees use.
+- **Step 1 DONE and build-verified.** `wip/openela-4.14.357` = **4.14.357-openela**
+  (21 merges, one per stable release; 2042 commits / 1595 files / +33,089 / −12,307
+  over `lineage-23.2`). Builds clean: `m bootimage` succeeded in 7m33s,
+  `utsrelease.h` = `4.14.357-openela-perf+`. 13 files were hand-resolved.
+- **Step 2 in progress on `wip/bpf-backport-4.14.357`** (3 commits, off the bump).
+  **All 33 `kernel/bpf` objects compile, 0 errors — including `devmap.c`, the
+  blocker that stalled the old branch.** Whole kernel: **3633 objects compile**,
+  `net/core/filter.c` and `security/bpf/` included. **One file left:
+  `kernel/trace/bpf_trace.c` (18 errors)** — all its missing APIs exist in the
+  reference; the only non-trivial one is `PIDTYPE_TGID` (do NOT import the
+  reference's `pid.h` — it carries the 4.19 pid rework; adapt
+  `group_send_sig_info()` to 4.14's 3-arg form instead). Details and the
+  per-dependency cost are in `journals/27-07-2026.md`.
+  The older `wip/bpf-backport-4.14.336` is superseded but kept.
+- The kernel has **not linked yet**. Only after it links and ctx offsets are
+  checked: set `ro.bpf.kver_override=5.10.239` (never without the backport) and
+  enable `CONFIG_BPF_UNPRIV_DEFAULT_OFF` (not yet on this branch).
 - **Fallback if the backport fails:** LineageOS 21 (Android 14), the newest branch an
   unmodified 4.14 kernel satisfies. A 5.10/6.x rebase is rejected (no SM6150/SM7150
   BSP exists at any 5.x; vendor blobs are built against 4.14 UAPI).
@@ -71,6 +78,19 @@ re-verify device state before any device-changing command.
   result.** rerere replays a resolution recorded in a different context and never
   re-justifies it. (At 4.14.346 it produced a `net/core/filter.c` that looked like
   a dropped hunk; it was correct, but only inspection established that.)
+- **Never reuse an old branch's work with `git cherry-pick -X theirs`.** Against a
+  moved baseline it discards hunks silently, with no conflict reported (it dropped
+  the documented `set_vm_flush_reset_perms()` no-op). Instead classify each file by
+  whether the baseline moved: identical baseline → take the old result verbatim;
+  moved → real 3-way `git merge-file --diff3` against the common base.
+- **Kernel-only iteration:** `$SCRATCH/kbuild.sh` builds with `O=` in a scratch dir,
+  leaving the Android `out/` untouched — minutes instead of a full `m bootimage`.
+  Needs `CLANG_TRIPLE` (not just `LLVM=1`) or the stack-protector check fails, and
+  needs `ROCM_PATH`/`HIP_PATH` set to nonexistent paths: this host has `/opt/rocm`,
+  and `clang -v` prints a `Found HIP installation:` line that `mkcompile_h` splices
+  into `LINUX_COMPILER`, producing an unparsable `compile.h`. That failure looks
+  exactly like a source error in `init/version.c` and `include/linux/types.h`.
+- The correct lunch combo is **`lineage_odessa-bp4a-userdebug`**.
 - **Resolving stable-merge conflicts: the LineageOS xiaomi sm6125/sm6150 trees are
   the oracle.** They merged the same OpenELA releases into an msm-4.14 vendor tree
   with the same divergences, so `git show reference/sm6125-lineage-23.2:<path>`
