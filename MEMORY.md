@@ -22,23 +22,26 @@ re-verify device state before any device-changing command.
   (21 merges, one per stable release; 2042 commits / 1595 files / +33,089 / −12,307
   over `lineage-23.2`). Builds clean: `m bootimage` succeeded in 7m33s,
   `utsrelease.h` = `4.14.357-openela-perf+`. 13 files were hand-resolved.
-- **Step 2 in progress on `wip/bpf-backport-4.14.357`** (5 commits, off the bump).
-  **All 33 `kernel/bpf` objects compile — including `devmap.c`, the blocker that
-  stalled the old branch — plus `security/bpf/` and `kernel/trace/bpf_trace.c`.
-  3670 objects total.**
-- **The one remaining blocker is `net/core/filter.c`: 175 errors, ~45 distinct
-  symbols from the 4.15→5.10 networking core** (IPv4/IPv6 FIB rework incl.
-  `fib6_info`, the 4.18 neighbour helpers, `dev_xmit_recursion*`, and a batch of
-  TCP/inet socket fields). The reference carries all of it — its
-  `net/ipv6/route.c` is ~2169 lines larger than ours. **This is a decision, not a
-  mechanical continuation:** backport the networking core (large, and it lands in
-  the IPv6 routing stack of a phone that must carry calls and mobile data), or
-  keep this tree's `filter.c` and reconcile it against the 5.10 BPF core.
-  Full symbol list in `journals/27-07-2026.md`.
+- **Step 2 DONE and the kernel LINKS.** `wip/bpf-backport-4.14.357`
+  (`295fa6418564`, 7 commits off the bump): the full 5.10 BPF subsystem plus the
+  4.15→5.10 networking core the user approved (option A). **3913 objects,
+  0 errors, `Image` produced.** 1839 files / +107,368 / −26,147 over
+  `lineage-23.2`. `vmlinux` has `btf_new_fd`, `dev_map_alloc`,
+  `ringbuf_map_alloc`, `bpf_trampoline_link_prog`; uapi has `BPF_BTF_LOAD`,
+  `BPF_MAP_TYPE_DEVMAP_HASH`, `BPF_MAP_TYPE_RINGBUF` — exactly what netbpfload
+  gates on. `devmap.c`, which stalled the old branch, builds.
   The older `wip/bpf-backport-4.14.336` is superseded but kept.
-- The kernel has **not linked yet**. Only after it links and ctx offsets are
-  checked: set `ro.bpf.kver_override=5.10.239` (never without the backport) and
-  enable `CONFIG_BPF_UNPRIV_DEFAULT_OFF` (not yet on this branch).
+- `ro.bpf.kver_override=5.10.239` is now set in
+  `device/motorola/odessa/properties.mk` (`7784600`), and
+  `CONFIG_BPF_UNPRIV_DEFAULT_OFF` finally takes effect — the symbol was in
+  odessa_defconfig but **missing from `init/Kconfig`, so it had silently been
+  doing nothing**; the 5.10 entry was added.
+- **Never set `ro.bpf.kver_override` on a kernel without the backport.** It is a
+  claim about kernel features, not a workaround; alone it only moves the failure
+  later (loader takes the BTF path and uses absent map types).
+- **NOT yet built through the Android build system and NOT yet on hardware.**
+  Next step is `m bootimage` + a boot test: does `exec_start bpfloader` now
+  succeed instead of `reboot,bpfloader-failed`?
 - **Fallback if the backport fails:** LineageOS 21 (Android 14), the newest branch an
   unmodified 4.14 kernel satisfies. A 5.10/6.x rebase is rejected (no SM6150/SM7150
   BSP exists at any 5.x; vendor blobs are built against 4.14 UAPI).
@@ -99,6 +102,16 @@ re-verify device state before any device-changing command.
   reached. Confirm by checking the `.o` exists, not by its absence from errors.
   (Cost a wrong "net/core/filter.c compiles" claim on 2026-07-27.)
 - The correct lunch combo is **`lineage_odessa-bp4a-userdebug`**.
+- **Backport method that made a 1839-file change tractable:** for each file,
+  (1) `git diff v4.14.357-openela HEAD -- <file>` to see what vendor content we
+  have, (2) confirm the reference carries it (same Android msm-4.14 lineage, so
+  it usually does), (3) import wholesale if yes, else 3-way merge with the
+  **upstream tag as base** so conflicts are reported. Helper: `$SCRATCH/merge3.sh`.
+  Always re-grep the vendor markers afterwards — don't assume.
+- **This tree has `CONFIG_SPECULATIVE_PAGE_FAULT`; the reference reverted SPF.**
+  Never import `include/linux/mm_types.h` from it. Likewise never import its
+  `time*.h` (y2038 rework cascades into timekeeping), `lib/idr.c` (needs xarray),
+  or `kernel/cgroup/cgroup.c` (core PSI/vendor divergence).
 - **Resolving stable-merge conflicts: the LineageOS xiaomi sm6125/sm6150 trees are
   the oracle.** They merged the same OpenELA releases into an msm-4.14 vendor tree
   with the same divergences, so `git show reference/sm6125-lineage-23.2:<path>`
