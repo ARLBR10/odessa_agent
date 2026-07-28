@@ -22,15 +22,19 @@ re-verify device state before any device-changing command.
   (21 merges, one per stable release; 2042 commits / 1595 files / +33,089 / −12,307
   over `lineage-23.2`). Builds clean: `m bootimage` succeeded in 7m33s,
   `utsrelease.h` = `4.14.357-openela-perf+`. 13 files were hand-resolved.
-- **Step 2 in progress on `wip/bpf-backport-4.14.357`** (3 commits, off the bump).
-  **All 33 `kernel/bpf` objects compile, 0 errors — including `devmap.c`, the
-  blocker that stalled the old branch.** Whole kernel: **3633 objects compile**,
-  `net/core/filter.c` and `security/bpf/` included. **One file left:
-  `kernel/trace/bpf_trace.c` (18 errors)** — all its missing APIs exist in the
-  reference; the only non-trivial one is `PIDTYPE_TGID` (do NOT import the
-  reference's `pid.h` — it carries the 4.19 pid rework; adapt
-  `group_send_sig_info()` to 4.14's 3-arg form instead). Details and the
-  per-dependency cost are in `journals/27-07-2026.md`.
+- **Step 2 in progress on `wip/bpf-backport-4.14.357`** (5 commits, off the bump).
+  **All 33 `kernel/bpf` objects compile — including `devmap.c`, the blocker that
+  stalled the old branch — plus `security/bpf/` and `kernel/trace/bpf_trace.c`.
+  3670 objects total.**
+- **The one remaining blocker is `net/core/filter.c`: 175 errors, ~45 distinct
+  symbols from the 4.15→5.10 networking core** (IPv4/IPv6 FIB rework incl.
+  `fib6_info`, the 4.18 neighbour helpers, `dev_xmit_recursion*`, and a batch of
+  TCP/inet socket fields). The reference carries all of it — its
+  `net/ipv6/route.c` is ~2169 lines larger than ours. **This is a decision, not a
+  mechanical continuation:** backport the networking core (large, and it lands in
+  the IPv6 routing stack of a phone that must carry calls and mobile data), or
+  keep this tree's `filter.c` and reconcile it against the 5.10 BPF core.
+  Full symbol list in `journals/27-07-2026.md`.
   The older `wip/bpf-backport-4.14.336` is superseded but kept.
 - The kernel has **not linked yet**. Only after it links and ctx offsets are
   checked: set `ro.bpf.kver_override=5.10.239` (never without the backport) and
@@ -90,6 +94,10 @@ re-verify device state before any device-changing command.
   and `clang -v` prints a `Found HIP installation:` line that `mkcompile_h` splices
   into `LINUX_COMPILER`, producing an unparsable `compile.h`. That failure looks
   exactly like a source error in `init/version.c` and `include/linux/types.h`.
+- **A file missing from a build's error list has not necessarily been built.**
+  Make stops in a directory at the first failing object, so later files are never
+  reached. Confirm by checking the `.o` exists, not by its absence from errors.
+  (Cost a wrong "net/core/filter.c compiles" claim on 2026-07-27.)
 - The correct lunch combo is **`lineage_odessa-bp4a-userdebug`**.
 - **Resolving stable-merge conflicts: the LineageOS xiaomi sm6125/sm6150 trees are
   the oracle.** They merged the same OpenELA releases into an msm-4.14 vendor tree
