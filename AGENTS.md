@@ -10,10 +10,9 @@ The user is new to Android ROM development and C/C++. Work in small, reversible,
 
 ## Project documentation layout
 
-- `MEMORY.md` — durable, extremely important facts and decisions, organized by date. **Read it at the start of every session.** Update it only when a verified project fact, decision, blocker, or completed milestone will matter in a future session. Keep it short; it is an index of what matters, not a log.
+- `MEMORY.md` — durable, extremely important facts and decisions, organized by date. **Read it completely at the start of every session.** Update it only when a verified project fact, decision, blocker, or completed milestone will matter in a future session. Keep it short; it is an index of what matters, not a log.
 - `journals/DD-MM-YYYY.md` — detailed per-day records: session work, discoveries, artifact hashes, command results, dead ends. Write specific information here, not in `MEMORY.md`.
 - `docs/` — standalone reports, handoffs, and big-bug analyses (e.g., root-cause investigations meant to be read on their own).
-- `OLD_MEMORY.md` — verbatim archive of the pre-2026-07-27 monolithic memory log. Do not update it or read it.
 
 Treat all of the above as context, not proof: re-verify device state and other safety-critical facts before any device-changing command.
 
@@ -50,7 +49,8 @@ Regional variants can differ in NFC, radio configuration, camera modules, partit
 - Never ask the user to paste secrets or complete unredacted logs. Show how to redact serial numbers, IMEI/MEID, phone numbers, accounts, Wi-Fi credentials, Bluetooth addresses, and tokens.
 - Preserve raw command output in ignored local artifacts where useful; summarize verified facts in tracked notes or commit messages.
 - When a step fails, diagnose it. Do not repeat flashing commands with random flags or substitute an image from a vaguely similar device.
-- For long Android build commands, give the user a command that redirects routine output to a log and ask for the concise result. Do not run long builds in the main agent context; if autonomous execution is necessary, use a subagent.
+- For Android build commands, give the user the command to ran it. His terminal caching is better than your native tool, plus you have less things to pay attention.
+- Inform the user of every change in files in this repo, he has to be able to backtrack your changes. Don't use bash commands to write/add text to files when your native tool (update, write, apply_patch, edit) can do the same.
 
 ## Repository rules
 
@@ -63,6 +63,7 @@ The Android source checkout is large. Keep this small project repository focused
 - Keep patches small and single-purpose. Record what was tested on hardware.
 - Do not use prebuilt objects to conceal source/build failures. If a proprietary component is required, identify its source build/firmware and extraction method.
 - Proprietary blobs may be tracked for reproducible builds; user-specific data and complete personal partition dumps must remain ignored.
+- Don't make changes that might be lost, or untracked, every change in LineageOS repos (outside tracked repos such as Device Tree, Kernel and Vendor) should be able to tracked. In the test instances warn the user about your changes.
 
 ### Android project repositories
 
