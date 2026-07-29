@@ -39,9 +39,25 @@ re-verify device state before any device-changing command.
 - **Never set `ro.bpf.kver_override` on a kernel without the backport.** It is a
   claim about kernel features, not a workaround; alone it only moves the failure
   later (loader takes the BTF path and uses absent map types).
-- **NOT yet built through the Android build system and NOT yet on hardware.**
-  Next step is `m bootimage` + a boot test: does `exec_start bpfloader` now
-  succeed instead of `reboot,bpfloader-failed`?
+- **Corrected hardware boundary (user-verified 2026-07-28):** exact commit
+  `df9da243d122` built and ran on the phone without the later backport commits.
+  The aggregate containing `37e035f8c918`, `eb0458ea6a0f`, and the networking
+  follow-ups bootloops; those groups have not yet been isolated on hardware.
+- **Disproven candidate (2026-07-28):** retaining the later APIs while restoring
+  Odessa's defconfig, ARM64 virtual-memory layout, and ARM64 BPF JIT byte-for-byte
+  to `df9da243d122` still bootlooped. Those reversions were removed. Two valid
+  RX-queue free fixes in `net/core/dev.c` remain; they were not the sole cause.
+- **Kernel hardware oracle clarification (2026-07-28):** the user tests each
+  kernel by building and flashing a recovery image. The reported failure is a
+  pre-Recovery bootloop, before Android or `netbpfload`; do not diagnose these
+  kernel candidates from the earlier full-Android bpfloader reboot path.
+- **Disproven recovery candidate:** disabling the two boot-time initcalls newly
+  added by `37e035f8` in `kernel/trace/bpf_trace.c` still bootlooped; they were
+  restored.
+- **Current unbuilt recovery candidate:** keep RX queues allocated but mark their
+  XDP metadata unused instead of registering every queue during net-device
+  creation. This isolates unconditional XDP setup added after `df9da243`; it is
+  a recovery diagnostic, not the final XDP design.
 - **Fallback if the backport fails:** LineageOS 21 (Android 14), the newest branch an
   unmodified 4.14 kernel satisfies. A 5.10/6.x rebase is rejected (no SM6150/SM7150
   BSP exists at any 5.x; vendor blobs are built against 4.14 UAPI).
