@@ -79,6 +79,13 @@ re-verify device state before any device-changing command.
   of the exact OTA payload reproduces every target partition byte-for-byte. OTA
   SHA-256 is `7fdc68d6e6503b7ca10a40fddbe55ff401b27cfaf84901eaa417e9b68db17a83`.
   Kernel and Odessa changes are published and immutable manifest pins restored.
+- **Current device blocker (2026-07-30):** the first full OTA sideload to target
+  slot A completed status 0; update_engine and safe partition hashes all passed.
+  On the approved reboot-to-Recovery checkpoint, the user observed a very fast
+  reboot cycle and suspects the prior slot/GPT issue. No post-reboot evidence was
+  captured. GPT corruption is unproven; stop writes and inspect bootloader/GPT
+  attributes first next session. Report:
+  `docs/bpf-backport-jit-root-cause-20260730.md`.
 - **OTA Recovery-B root cause proven and fixed (2026-07-29):** the QTI bootctrl
   fork correctly switched every partition, but encoded active/inactive as
   `0x3f`/`0x40`; Motorola MBM's own working `fastboot set_active` uses exactly
