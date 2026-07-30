@@ -1,20 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
-  <!-- Historical Odessa baseline: device tree stopped at lineage-19.1. -->
+  <!-- Odessa's lineage-23.2 bring-up, based on the historical lineage-19.1
+       tree and maintained in the Odessa fork. -->
   <project path="device/motorola/odessa"
-           name="LineageOS/android_device_motorola_odessa"
+           name="ARLBR10/android_device_motorola_odessa"
            remote="github"
-           revision="49f6257549cd2081e7a07d7efae4ba51f3139983" />
+           revision="6518db3a813137250d0650ebc92aefacd612973f" />
 
-  <!-- Newest published SM6150 common/kernel baseline (lineage-20). -->
+  <!-- SM6150 common lineage-23.2 bring-up, based on the historical lineage-20
+       tree. The kernel is temporarily pinned at the tested OpenELA 4.14.357
+       merge without the recovery-bootlooping Android 16 BPF backport. -->
   <project path="device/motorola/sm6150-common"
-           name="LineageOS/android_device_motorola_sm6150-common"
+           name="ARLBR10/android_device_motorola_sm6150-common"
            remote="github"
-           revision="47c9e585cf78f2371a4d12766925a0e73b5a97fb" />
+           revision="f64cb3e53f497b3c6af7041a5913a13c25d619b2" />
   <project path="kernel/motorola/sm6150"
-           name="LineageOS/android_kernel_motorola_sm6150"
-           remote="github"
-           revision="112b525abbc08298256abedbf984e0e8c20d0338" />
+            name="ARLBR10/android_kernel_motorola_sm6150"
+            remote="github"
+            revision="70aea3b5f901b3298685f2736fef899afa8711d8" />
 
   <!-- Branch-current shared Motorola HALs for the lineage-23.2 checkout. -->
   <project path="hardware/motorola"
@@ -37,5 +40,5 @@
   <project path="hardware/qcom-caf/bootctrl"
            name="ARLBR10/android_hardware_qcom_bootctrl"
            remote="github"
-           revision="6024c108fc43286e09b4d63b7c620ed8ef0a5903" />
+           revision="6a85678788e1331f9a2dde385869e3719b064912" />
 </manifest>
