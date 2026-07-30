@@ -5,11 +5,11 @@
   <project path="device/motorola/odessa"
            name="ARLBR10/android_device_motorola_odessa"
            remote="github"
-           revision="6518db3a813137250d0650ebc92aefacd612973f" />
+           revision="fc7495d15985fb611be1e8287f8efb2c58e48fa7" />
 
   <!-- SM6150 common lineage-23.2 bring-up, based on the historical lineage-20
-       tree. The kernel is temporarily pinned at the tested OpenELA 4.14.357
-       merge without the recovery-bootlooping Android 16 BPF backport. -->
+       tree. The kernel includes OpenELA 4.14.357 and the hardware-validated
+       Android 16 BPF backport. -->
   <project path="device/motorola/sm6150-common"
            name="ARLBR10/android_device_motorola_sm6150-common"
            remote="github"
@@ -17,7 +17,7 @@
   <project path="kernel/motorola/sm6150"
             name="ARLBR10/android_kernel_motorola_sm6150"
             remote="github"
-            revision="70aea3b5f901b3298685f2736fef899afa8711d8" />
+            revision="56146fa516106938ed3a8f0c0e187f3c679371a4" />
 
   <!-- Branch-current shared Motorola HALs for the lineage-23.2 checkout. -->
   <project path="hardware/motorola"
