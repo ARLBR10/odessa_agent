@@ -7,7 +7,7 @@ re-verify device state before any device-changing command.
 - `docs/` — standalone reports, handoffs, and big-bug analyses.
 - `OLD_MEMORY.md` — verbatim archive of the pre-2026-07-27 monolithic log. Do not update.
 
-## Current state (as of 2026-07-27)
+## Current state (as of 2026-07-29)
 
 - **Boot blocker, proven end to end:** Android dies at `exec_start bpfloader`;
   `/metadata/bootstat/persist.sys.boot.reason` = `reboot,bpfloader-failed`. Android 16's
@@ -58,6 +58,20 @@ re-verify device state before any device-changing command.
   XDP metadata unused instead of registering every queue during net-device
   creation. This isolates unconditional XDP setup added after `df9da243`; it is
   a recovery diagnostic, not the final XDP design.
+- **BPF backport paused by user decision (2026-07-29):** the completed backport
+  still bootloops before Recovery. The build kernel is temporarily pinned to
+  OpenELA-only `70aea3b5f901` (4.14.357); do not modify it. The incompatible
+  `ro.bpf.kver_override=5.10.239` declaration is removed while this kernel is in
+  use. Recovery can be tested, but Android 16 remains blocked at netbpfload.
+- **OTA Recovery-B root cause proven and fixed (2026-07-29):** the QTI bootctrl
+  fork correctly switched every partition, but encoded active/inactive as
+  `0x3f`/`0x40`; Motorola MBM's own working `fastboot set_active` uses exactly
+  `0x04`/`0x00`. With `0x3f`, the verified Recovery B and even a temporary boot
+  failed before Recovery. An Odessa-gated bootctrl change now writes exactly
+  `0x04`/`0x00`; before/after measurement showed every A partition become
+  `0x00` and every B partition become `0x04`, including XBL. Recovery B then
+  booted successfully on `4.14.357-openela-perf+`. Published as bootctrl
+  `6a85678788e1` and manifest-pinned.
 - **Fallback if the backport fails:** LineageOS 21 (Android 14), the newest branch an
   unmodified 4.14 kernel satisfies. A 5.10/6.x rebase is rejected (no SM6150/SM7150
   BSP exists at any 5.x; vendor blobs are built against 4.14 UAPI).
@@ -147,10 +161,15 @@ re-verify device state before any device-changing command.
 - Proprietary blobs come solely from the exact installed TequilaOS payload ZIP
   (SHA-256 `2eebc8ee17bcbc3a28d96b7b1dbf1b6769c6281d437194fbf582f0e2b365fdb6`);
   lists revalidated with zero missing/mismatched files.
-- Repos live on `lineage-23.2` branches; forks under `ARLBR10` (kernel, bootctrl).
-  `manifests/odessa.xml` pins the bootctrl fork; the five device/kernel/vendor repos
-  still pin public historical commits — update only after private remotes carry the
-  new commits. Never commit logs or captures containing identifiers.
+- Repos live on `lineage-23.2` branches. `manifests/odessa.xml` pins the published
+  `ARLBR10` Odessa (`6518db3`), SM6150 common (`f64cb3e5`), temporary OpenELA-only
+  kernel (`70aea3b5`), and bootctrl (`6a85678`) commits. The two vendor
+  repositories remain local/private and are not manifest projects. Never commit
+  logs or captures containing identifiers.
+- A 2026-07-29 sync recreated Odessa/common at the old public historical manifest
+  pins and caused `lunch` to fail on the obsolete `sepolicy_vndr-legacy-um` path.
+  The commits were recovered from their `ARLBR10` branches and the manifest pins
+  corrected. Do not restore the historical LineageOS project names/revisions.
 
 ## Per-day key facts
 
