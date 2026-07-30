@@ -58,11 +58,27 @@ re-verify device state before any device-changing command.
   XDP metadata unused instead of registering every queue during net-device
   creation. This isolates unconditional XDP setup added after `df9da243`; it is
   a recovery diagnostic, not the final XDP design.
-- **BPF backport paused by user decision (2026-07-29):** the completed backport
-  still bootloops before Recovery. The build kernel is temporarily pinned to
-  OpenELA-only `70aea3b5f901` (4.14.357); do not modify it. The incompatible
-  `ro.bpf.kver_override=5.10.239` declaration is removed while this kernel is in
-  use. Recovery can be tested, but Android 16 remains blocked at netbpfload.
+- **BPF bootloop isolation resumed (2026-07-29):** the completed backport still
+  bootloops before Recovery. A diagnostic with eBPF syscall/JIT/cgroup/classifier
+  support disabled boots, and a second diagnostic with the full eBPF core/events
+  restored but JIT disabled also boots. This isolates the failure to JIT execution,
+  not the verifier, eBPF core, cgroup/classifier, or imported networking core.
+  XDP RX-queue registration and `CONFIG_BPF_EVENTS` were separately disabled
+  without curing the loop. The next checkpoint compiles the byte-identical Xiaomi
+  ARM64 JIT but leaves it default-off (`BPF_JIT_ALWAYS_ON=n`). That checkpoint
+  also boots, proving static JIT integration is safe. **Root cause hardware-confirmed:**
+  the import omitted `BPF_JIT_DEFAULT_ON`, `ARCH_WANT_DEFAULT_BPF_JIT`, and ARM64's
+  select, so `bpf_jit_enable` remained zero while `BPF_JIT_ALWAYS_ON` removed the
+  interpreter. Restoring the exact 5.10 Kconfig pieces initializes
+  `bpf_jit_enable=1`; the production-config Recovery then booted successfully.
+  Published as kernel `56146fa51610`; the matching
+  `ro.bpf.kver_override=5.10.239` is published as Odessa `fc7495d29f7a`. The
+  manifest pins both immutable revisions, so Repo sync is safe again.
+- **Full build verified (2026-07-30):** `m -j8 bacon recoveryimage` succeeds,
+  VINTF is compatible, the property is packaged, and native offline application
+  of the exact OTA payload reproduces every target partition byte-for-byte. OTA
+  SHA-256 is `7fdc68d6e6503b7ca10a40fddbe55ff401b27cfaf84901eaa417e9b68db17a83`.
+  Kernel and Odessa changes are published and immutable manifest pins restored.
 - **OTA Recovery-B root cause proven and fixed (2026-07-29):** the QTI bootctrl
   fork correctly switched every partition, but encoded active/inactive as
   `0x3f`/`0x40`; Motorola MBM's own working `fastboot set_active` uses exactly
@@ -162,8 +178,8 @@ re-verify device state before any device-changing command.
   (SHA-256 `2eebc8ee17bcbc3a28d96b7b1dbf1b6769c6281d437194fbf582f0e2b365fdb6`);
   lists revalidated with zero missing/mismatched files.
 - Repos live on `lineage-23.2` branches. `manifests/odessa.xml` pins the published
-  `ARLBR10` Odessa (`6518db3`), SM6150 common (`f64cb3e5`), temporary OpenELA-only
-  kernel (`70aea3b5`), and bootctrl (`6a85678`) commits. The two vendor
+  `ARLBR10` Odessa (`fc7495d`), SM6150 common (`f64cb3e5`), BPF-backported kernel
+  (`56146fa`), and bootctrl (`6a85678`) commits. The two vendor
   repositories remain local/private and are not manifest projects. Never commit
   logs or captures containing identifiers.
 - A 2026-07-29 sync recreated Odessa/common at the old public historical manifest
