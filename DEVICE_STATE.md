@@ -1,6 +1,6 @@
 # Odessa Device State
 
-Last updated: 2026-08-04
+Last updated: 2026-08-04 (TRY23 user testing)
 
 This file is the current hardware and regression dashboard for the physical
 Motorola Moto G9 Plus (`odessa`). It records observations, not assumptions.
@@ -42,11 +42,13 @@ a preserved artifact and must not be trusted after another build.
 | Recovery | RAM-boot exact Recovery | `PASS` | TRY23 exact payload Recovery booted |
 | Recovery | Installed Recovery boot | `UNTESTED` | TRY23 was RAM-booted; installed-partition Recovery has not been separately reported |
 | Update | A/B OTA installation | `PASS` | User reports TRY23 update installed successfully |
+| Update | Automatic first boot after installation | `FAIL` | User reports stock partition-table flashing is still required before initial boot; `ODESSA-004` |
 | Display | Panel output and boot animation | `PASS` | GPU/display path reached Setup Wizard and TRY23 UI |
 | Graphics | Adreno acceleration initializes | `PASS` | TRY23 reaches rendered Android UI; ZAP fix was originally isolated in TRY15 |
 | Input | Touchscreen in Recovery | `PASS` | TRY23 auto-loads modules; touch works without ADB commands |
 | Input | Touchscreen in Android | `PASS` | User reports touch works after installing TRY23 |
 | Input | Physical buttons | `PARTIAL` | Recovery navigation observed; full key/long-press matrix not run |
+| Input | Vibration / haptics | `PASS` | User reports phone vibration works on TRY23 |
 | Encryption | Fresh userdata encryption and unlock | `UNTESTED` | Must be tested on the current baseline |
 | Update | Slot fallback and failed-update behavior | `UNTESTED` | Successful update alone does not validate fallback |
 | Update | In-system updater flow | `UNTESTED` | Current update path details not fully recorded |
@@ -55,17 +57,22 @@ a preserved artifact and must not be trusted after another build.
 | Telephony | SMS/MMS | `UNTESTED` | |
 | Telephony | Mobile data | `UNTESTED` | Test LTE attachment and data transfer |
 | Telephony | Emergency calling | `UNTESTED` | Use a lawful non-disruptive validation plan; do not place test emergency calls casually |
-| Connectivity | Wi-Fi | `UNTESTED` | Test association, internet, reconnect, and hotspot |
-| Connectivity | Bluetooth | `UNTESTED` | Test scan, pairing, audio, and reconnect |
+| Connectivity | Wi-Fi | `FAIL` | User reports Wi-Fi does not work on TRY23; `ODESSA-001` |
+| Connectivity | Bluetooth | `FAIL` | User reports Bluetooth does not work on TRY23; `ODESSA-002` |
 | Connectivity | NFC | `UNTESTED` | Regional SKU support must be verified |
 | Connectivity | USB data / ADB in Android | `UNTESTED` | Recovery ADB is separately proven |
-| Audio | Speaker, earpiece, microphones, headset | `UNTESTED` | |
-| Camera | Rear cameras, front camera, flash, video | `UNTESTED` | Test every exposed sensor and common resolutions |
+| Audio | Speaker, earpiece, microphones, headset | `PARTIAL` | scrcpy audio capture throws `UnsupportedOperationException`; physical audio paths remain untested; `ODESSA-005` |
+| Camera | Front camera preview and capture | `PASS` | User reports the front camera works on TRY23 |
+| Camera | Primary rear camera preview and capture | `PASS` | User reports one rear camera works on TRY23 |
+| Camera | Auxiliary rear cameras | `FAIL` | Additional rear cameras are missing from the camera interface; `ODESSA-006` |
+| Camera | Camera flash | `PASS` | User reports flash works on TRY23 |
+| Camera | Video recording and playback | `UNTESTED` | Test front/rear recording, audio, stabilization, and common resolutions |
 | Sensors | Accelerometer, gyro, light, proximity, compass | `UNTESTED` | |
 | Location | GNSS fix | `UNTESTED` | Test cold and warm fixes without leaking location data |
-| Biometrics | Fingerprint enrollment and unlock | `UNTESTED` | |
+| Biometrics | Fingerprint enrollment and unlock | `FAIL` | Fingerprint controls are absent from Settings; sensor detection is unconfirmed; `ODESSA-003` |
 | Power | Charging, battery reporting, thermal behavior | `UNTESTED` | Include powered-off charging and USB current behavior |
 | Power | Suspend, wake, and overnight idle | `UNTESTED` | |
+| Power | Screen sleep | `PASS` | User reports the display enters sleep on TRY23; wake and deep suspend remain separate tests |
 | Media | Hardware video encode/decode | `UNTESTED` | |
 | Security | SELinux enforcing with no broad bypass | `UNTESTED` | Userdebug observations do not establish release readiness |
 | Security | Verified Boot and release signing | `UNTESTED` | Current artifacts use bring-up signing/security limitations |
@@ -75,11 +82,14 @@ a preserved artifact and must not be trusted after another build.
 
 ## Open Issues
 
-No post-TRY23 issues have been entered yet. Add each reported problem as one row
-before investigation begins.
-
 | ID | Area | Summary | Status | Priority | First seen | Evidence / Next step |
 | --- | --- | --- | --- | --- | --- | --- |
+| `ODESSA-001` | Wi-Fi | Wi-Fi does not work | `FAIL` | `P2` | TRY23 | User report. Capture framework, HAL, kernel, firmware-loading, and module state before attributing it to the Xiaomi networking/BPF import. |
+| `ODESSA-002` | Bluetooth | Bluetooth does not work | `FAIL` | `P2` | TRY23 | User report. Capture Bluetooth service/HAL state, UART transport, firmware, and kernel logs; investigate shared causes with Wi-Fi without assuming one. |
+| `ODESSA-003` | Fingerprint | Fingerprint option is absent from Settings | `FAIL` | `P2` | TRY23 | User report. Determine installed sensor variant, kernel device/module state, HAL/service registration, VINTF, and framework feature declaration. |
+| `ODESSA-004` | Install / boot control | Initial boot after installation requires manually flashing the stock partition table | `FAIL` | `P1` | TRY23 | User report. Preserve pre/post-install GPT captures and bootloader state; re-check target-slot boot attributes and the running Recovery boot-control HAL before any further partition-table operation. |
+| `ODESSA-005` | Audio | scrcpy cannot create an `AudioRecord`; overall audio status unknown | `PARTIAL` | `P2` | TRY23 | Reported exception: `java.lang.UnsupportedOperationException: Cannot create AudioRecord`. Test local media playback/recording and calls separately, then collect AudioFlinger/audio HAL state and scrcpy version/options. |
+| `ODESSA-006` | Camera | Only one rear camera is exposed; auxiliary rear cameras are missing | `FAIL` | `P2` | TRY23 | User report. Enumerate camera provider IDs and characteristics, compare physical sensor/module detection with the verified SKU, and inspect provider/HAL logs without assuming every lens has a separate public camera ID. |
 
 Priorities are `P0` (device safety/data loss), `P1` (core phone function or boot),
 `P2` (important feature), and `P3` (minor or cosmetic).
