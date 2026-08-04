@@ -79,22 +79,123 @@ re-verify device state before any device-changing command.
   of the exact OTA payload reproduces every target partition byte-for-byte. OTA
   SHA-256 is `7fdc68d6e6503b7ca10a40fddbe55ff401b27cfaf84901eaa417e9b68db17a83`.
   Kernel and Odessa changes are published and immutable manifest pins restored.
-- **Current device blocker (2026-07-30):** the first full OTA sideload to target
-  slot A completed status 0; update_engine and safe partition hashes all passed.
-  On the approved reboot-to-Recovery checkpoint, the user observed a very fast
-  reboot cycle and suspects the prior slot/GPT issue. No post-reboot evidence was
-  captured. GPT corruption is unproven; stop writes and inspect bootloader/GPT
-  attributes first next session. Report:
+- **BPF completion hardware-proven (2026-08-01):** a controlled slot-B Android
+  boot with fsynced metadata markers reached `boot-scripts-loaded`,
+  `post-fs-data`, `bpf-start`, **`bpf-done`**, and `zygote-start`. The complete
+  BPF backport and version declaration now pass NetBpfLoad on the phone. The
+  active boot stall is later than BPF. TRY12 further proved
+  `odsign.verification.done=1` and that init issued starts for statsd, primary
+  zygote, and secondary zygote. The next RC-only diagnostic records later init
+  triggers and service running/restarting states.
+- **Recovery marker-reading rule (2026-08-01):** Lineage Recovery does not mount
+  `/metadata` automatically. An absent file under the ramdisk mount point is no
+  evidence. Mount the metadata partition read-only with `ro,noload` before
+  reading diagnostic files; never expose or copy metadata-encryption keys.
+- **First full-Android BPF OTA failure proven (2026-07-30):** preserved ramoops
+  reaches NetBpfLoad, then cleanly restarts with `bpfloader-failed`. Init rejected
+  `ro.bpf.kver_override=5.10.239` from `/vendor/build.prop` because this is not a
+  vendor-owned property, so NetBpfLoad saw 4.14 and enforced its kernel minimum.
+  Odessa `properties.mk` now uses `PRODUCT_SYSTEM_PROPERTIES`; rebuild and verify
+  the property moves to `SYSTEM/build.prop` before another sideload.
+- **Superseded reboot concern (2026-07-30):** the first full OTA sideload to slot A
+  completed status 0; update_engine and safe partition hashes all passed. A fast
+  reboot cycle initially raised concern about GPT attributes, but later ramoops
+  proved Android booted through userspace and deliberately restarted for the
+  rejected BPF property above. GPT corruption is not indicated. Report:
   `docs/bpf-backport-jit-root-cause-20260730.md`.
-- **OTA Recovery-B root cause proven and fixed (2026-07-29):** the QTI bootctrl
-  fork correctly switched every partition, but encoded active/inactive as
-  `0x3f`/`0x40`; Motorola MBM's own working `fastboot set_active` uses exactly
-  `0x04`/`0x00`. With `0x3f`, the verified Recovery B and even a temporary boot
-  failed before Recovery. An Odessa-gated bootctrl change now writes exactly
-  `0x04`/`0x00`; before/after measurement showed every A partition become
-  `0x00` and every B partition become `0x04`, including XBL. Recovery B then
-  booted successfully on `4.14.357-openela-perf+`. Published as bootctrl
-  `6a85678788e1` and manifest-pinned.
+- **OTA slot-attribute correction (2026-08-01, supersedes the claimed complete
+  2026-07-29 fix):** the boot chain uses hybrid encoding. XBL and all non-boot
+  A/B partitions require Motorola's simple `0x04`/`0x00`, but the target
+  `boot_<slot>` requires `0x3f`. Two status-0 OTAs wrote target boot as `0x04`;
+  both entered fastboot until the user restored stock GPT and ran
+  `fastboot set_active`. Fresh byte-level diffs show MBM changed only target boot
+  `0x04→0x3f`. TRY13 proved preserving the old slot's successful bit as `0x72`
+  still fails; Motorola's working `fastboot set_active b` changes that sole
+  remaining byte to fixed inactive `0x3a`. TRY14 hardware-verified the corrected
+  `0x3f`/`0x3a` boot plus `0x04`/`0x00` non-boot implementation with a direct
+  automatic target-slot Recovery boot; the fix remains uncommitted and published
+  `6a85678788e1` remains incomplete.
+- **TRY14 GPU blocker (2026-08-02):** the bounded persistent log
+  proves SurfaceFlinger aborts only because Adreno cannot open `/dev/kgsl-3d0`:
+  `kgsl_open()` returns `EAGAIN`, then EGL reports `EGL_BAD_ALLOC`. The initiating
+  kernel failure is secure GPU firmware loading: `a615_zap.mdt` is not found,
+  followed by GMU/GX stop timeouts during `adreno_start()` cleanup. All four
+  `a615_zap` PIL files exist in the installed read-only `modem_a` firmware image,
+  but are unavailable to ueventd at request time. TRY15 packages them in
+  `/vendor/firmware`; ZIP integrity, all seven payload partitions, file hashes,
+  SELinux labels, and the hardware result are verified. This fix is uncommitted.
+  Exact artifact and firmware hashes are in `journals/01-08-2026.md`.
+- **TRY15 hardware result (2026-08-02):** the packaged `a615_zap` firmware fixes
+  GPU initialization: no ZAP/KGSL/EGL failure recurs and the Lineage boot
+  animation runs. The new blocker is SystemServer waiting for obsolete HIDL
+  memtrack; `android.hardware.memtrack@1.0-impl` cannot find a legacy
+  `memtrack.<hardware>.so`, then watchdog kills SystemServer after 66 seconds.
+  Motorola common now mirrors upstream Xiaomi SM6150 fix `5f487d934999`: remove
+  the HIDL manifest/service and package QTI's AIDL
+  `vendor.qti.hardware.memtrack-service`. TRY16 hardware-verifies memtrack and
+  reaches `bootAnimationComplete`.
+- **TRY16 blocker (2026-08-02):** SystemServer reaches final screen enable, then
+  LiveDisplay blocks 60 seconds waiting for declared `IDisplayModes/default` and
+  watchdog restarts it. The generic AIDL SDM service never registers display
+  modes, consistent with this panel exposing no QDCM modes. Motorola common now
+  sets `livedisplay_sdm.enable_dm=false` (as current Motorola common trees do),
+  retaining Picture Adjustment while removing the unsupported declaration.
+  TRY17 is artifact-verified: VINTF is compatible, its exact payload vendor has
+  only `IPictureAdjustment/default`, and all seven payload partitions reproduce
+  target-files. Hardware testing proves Display Modes was removed, but the same
+  watchdog then blocks on `IPictureAdjustment/default`; the SDM daemon registers
+  neither interface on this device. The generic SDM package is now removed
+  entirely. TRY18 is artifact-verified: VINTF passes, exact payload vendor has no
+  SDM binary/RC/device manifest, and all seven payload partitions reproduce
+  target-files. **TRY18 reaches the LineageOS setup wizard**, resolving the
+  SystemServer/LiveDisplay boot blocker. Touchscreen input does not work in
+  either Lineage Recovery or Android, so the active blocker is now the shared
+  kernel touch-driver/module/firmware path. Recovery proves the exact panel is
+  Novatek `NVT-ts-spi`, but `/proc/modules` is empty and init reports no
+  `/lib/modules`; touch modules/firmware were vendor-only while Recovery leaves
+  `/vendor` empty. The TRY19 candidate packages both Odessa touch variants,
+  dependency, and firmware in Recovery. TRY19 is artifact-verified: exact payload
+  recovery has the correct module load/dependency metadata and firmware, all
+  seven payload partitions reproduce target-files, and VINTF passes. It is
+  installed on slot B but its Recovery returns to bootloader before ADB, including
+  when RAM-booted, isolating an early touch-module load crash. The next diagnostic
+  packaged all modules/firmware but auto-loaded only `sensors_class`; exact TRY20
+  also returns to bootloader when RAM-booted. Thus the touch drivers themselves
+  are not yet isolated. Next test: package modules/firmware with an empty
+  `modules.load`, then RAM-boot before any further OTA. Exact analysis:
+  `docs/try19-recovery-pre-adb-regression-20260803.md`.
+- **TRY21 recovery diagnostic artifact-verified (2026-08-03):** Odessa keeps all
+  three touch-related modules in Recovery but sets an explicitly empty
+  `BOARD_RECOVERY_KERNEL_MODULES_LOAD`. Exact payload Recovery SHA-256 is
+  `ff352b4f294a8c902c118a954365ffd32ff0767455bd54f24b7abbd824402aac`;
+  its `modules.load` is zero bytes and module/dependency metadata is intact. This
+  distinguishes `sensors_class` insertion from merely packaging `/lib/modules`.
+  Hardware RAM-boot succeeds and reaches ADB, proving module packaging and image
+  size are safe. Manual `insmod sensors_class.ko` fails with
+  `Required key not available`; dmesg says its PKCS#7 signature is not trusted.
+  This explains TRY19/20: first-stage init treats the rejected listed module as
+  fatal. Root cause is stale sccache output for `certs/system_certificates.S`:
+  its `.incbin` certificate bytes were absent from the cache key, so the kernel
+  embedded an old generated certificate while modules used the current key.
+  Kernel `certs/Makefile` now adds the signing-certificate SHA-256 to that
+  assembly command; `CONFIG_MODULE_SIG_FORCE=y` remains enabled. TRY22 hardware
+  confirms the fix: the runtime key matches the current certificate, both
+  `sensors_class.ko` and `nova_0flash_mmi.ko` insert successfully, and Novatek
+  registers input `event2` plus IRQ 249. The prior claim that the Novatek blobs
+  were aria2 control files was a `file(1)` false positive: the driver parses and
+  downloads `novatek_ts_fw.bin` successfully in 84 ms, then reads firmware
+  version 3 / PID `601F`. Both extracted files remain byte-identical 139,264-byte
+  blobs (SHA-256
+  `d9d1f5e88dc0fa90fdd64437e39adac7bf72ad70a8335e339cdb325cec2dab38`),
+  The runtime firmware path and Recovery UI touch are hardware-proven working.
+  Odessa now restores dependency-ordered automatic Recovery loading for
+  `sensors_class`, Novatek, and Focaltech. TRY23 hardware-verifies the no-command
+  path both when RAM-booted and after the user installed the update; touch works.
+- **Artifact preservation hazard (2026-08-02):** TRY16 through TRY19 filenames
+  were hardlinks to the same mutable `lineage_odessa-ota.zip` inode and now all
+  contain TRY19 bytes. Recorded historical hashes remain valid evidence, but the
+  old files are not preserved artifacts. Future named artifacts must be real
+  copies/reflinks with distinct inodes and rechecked hashes.
 - **Fallback if the backport fails:** LineageOS 21 (Android 14), the newest branch an
   unmodified 4.14 kernel satisfies. A 5.10/6.x rebase is rejected (no SM6150/SM7150
   BSP exists at any 5.x; vendor blobs are built against 4.14 UAPI).
