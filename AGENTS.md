@@ -11,10 +11,28 @@ The user is new to Android ROM development and C/C++. Work in small, reversible,
 ## Project documentation layout
 
 - `MEMORY.md` — durable, extremely important facts and decisions, organized by date. **Read it completely at the start of every session.** Update it only when a verified project fact, decision, blocker, or completed milestone will matter in a future session. Keep it short; it is an index of what matters, not a log.
+- `DEVICE_STATE.md` — current physical-device baseline, hardware test matrix, open issues, and resolved bring-up defects. **Read it completely at the start of every session.** Update it after every hardware test, installed-build change, newly reported defect, or hardware-verified fix.
 - `journals/DD-MM-YYYY.md` — detailed per-day records: session work, discoveries, artifact hashes, command results, dead ends. Write specific information here, not in `MEMORY.md`.
 - `docs/` — standalone reports, handoffs, and big-bug analyses (e.g., root-cause investigations meant to be read on their own).
 
 Treat all of the above as context, not proof: re-verify device state and other safety-critical facts before any device-changing command.
+
+### Device state format
+
+Keep `DEVICE_STATE.md` concise and current rather than using it as a chronological
+log. Its required sections are:
+
+1. `Test Baseline` — exact device variant, installed build, artifact hashes when known, and relevant security context.
+2. `Status Values` — use only `PASS`, `FAIL`, `PARTIAL`, `UNTESTED`, or `BLOCKED`.
+3. `Current Matrix` — one independently testable function per row, with exact-build evidence. Never infer that an untested function works because Android boots.
+4. `Open Issues` — stable `ODESSA-NNN` IDs, area, concise symptom, status, priority, first-seen build, evidence, and next step. Priorities are `P0` safety/data loss, `P1` boot/core phone function, `P2` important feature, and `P3` minor/cosmetic.
+5. `Resolved Bring-Up Issues` — retain the issue ID and record the first hardware-verified fixed build and evidence.
+6. `Update Rules` — preserve the privacy and evidence requirements in the file.
+
+Detailed commands and raw observations still belong in the current journal;
+standalone root-cause analyses belong in `docs/`; only durable milestones belong
+in `MEMORY.md`. When evidence is from an older build, identify it explicitly and
+do not automatically promote it to a pass on the current baseline.
 
 ## Known starting point
 
@@ -23,7 +41,7 @@ Treat all of the above as context, not proof: re-verify device state and other s
 - Verified model/SKU: `XT2087-1`, Brazil (see `MEMORY.md` for the current verified baseline)
 - Platform: Qualcomm Snapdragon 730G / SM7150-family platform, commonly grouped with Motorola `sm6150-common` trees
 - Original software generation: Android 10, with an official Android 11 update (`RPAS31.Q2-59-17-4-3-9` is the validated stock restore package)
-- Current phone state: bootloader-unlocked, running TequilaOS (Android 14) as the working reference
+- Current phone state: bootloader-unlocked, running the installed LineageOS 23.2 TRY23 bring-up build; TequilaOS (Android 14) remains the historical working reference
 - TequilaOS source is unavailable. Treat it only as a running reference from which logs, properties, firmware versions, and required proprietary files may be collected.
 - Historical LineageOS device/common trees exist. They are evidence and a migration baseline, not proof that a modern branch works unchanged.
 
