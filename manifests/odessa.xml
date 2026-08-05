@@ -5,7 +5,7 @@
   <project path="device/motorola/odessa"
            name="ARLBR10/android_device_motorola_odessa"
            remote="github"
-           revision="fc7495d15985fb611be1e8287f8efb2c58e48fa7" />
+           revision="4926de5c533b17145c5492314cc2f594412429e3" />
 
   <!-- SM6150 common lineage-23.2 bring-up, based on the historical lineage-20
        tree. The kernel includes OpenELA 4.14.357 and the hardware-validated
