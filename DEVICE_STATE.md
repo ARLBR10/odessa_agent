@@ -61,7 +61,7 @@ a preserved artifact and must not be trusted after another build.
 | Connectivity | Bluetooth | `UNTESTED` | Latest direct pass is TRY24 after `/vendor/bt_firmware` mounted |
 | Connectivity | NFC | `UNTESTED` | Regional SKU support must be verified |
 | Connectivity | USB data / ADB in Android | `PASS` | Android ADB used to verify TRY25 |
-| Audio | Speaker, earpiece, microphones, headset | `UNTESTED` | Latest partial evidence is TRY24 after `/vendor/dsp` mounted; `ODESSA-005` remains open |
+| Audio | Speaker, earpiece, microphones, headset | `PARTIAL` | User reports audio works on TRY25 with `/vendor/dsp` mounted; exact speaker, earpiece, microphone, headset, call-audio, and scrcpy paths need separate tests; `ODESSA-005` |
 | Camera | Front camera preview and capture | `UNTESTED` | Latest direct evidence is TRY23 |
 | Camera | Primary rear camera preview and capture | `UNTESTED` | Latest direct evidence is TRY23 |
 | Camera | Auxiliary rear cameras | `UNTESTED` | Latest failure evidence is TRY23; `ODESSA-006` remains open |
@@ -86,8 +86,8 @@ a preserved artifact and must not be trusted after another build.
 | --- | --- | --- | --- | --- | --- | --- |
 | `ODESSA-003` | Fingerprint | Fingerprint option is absent from Settings | `FAIL` | `P2` | TRY23 | User report. Determine installed sensor variant, kernel device/module state, HAL/service registration, VINTF, and framework feature declaration. |
 | `ODESSA-004` | Install / boot control | Initial boot after installation requires manually flashing the stock partition table | `FAIL` | `P1` | TRY23 | User report. Preserve pre/post-install GPT captures and bootloader state; re-check target-slot boot attributes and the running Recovery boot-control HAL before any further partition-table operation. |
-| `ODESSA-005` | Audio | scrcpy cannot create an `AudioRecord`; overall audio status unknown | `PARTIAL` | `P2` | TRY23 | Reported exception: `java.lang.UnsupportedOperationException: Cannot create AudioRecord`. Test local media playback/recording and calls separately, then collect AudioFlinger/audio HAL state and scrcpy version/options. |
-| `ODESSA-006` | Camera | Only one rear camera is exposed; auxiliary rear cameras are missing | `FAIL` | `P2` | TRY23 | User report. Enumerate camera provider IDs and characteristics, compare physical sensor/module detection with the verified SKU, and inspect provider/HAL logs without assuming every lens has a separate public camera ID. |
+| `ODESSA-005` | Audio | Audio works, but individual playback/capture paths are not fully verified | `PARTIAL` | `P2` | TRY23 | User reports audio works on TRY25. Separately test speaker, earpiece, microphones, headset, call audio, and scrcpy capture before marking the area complete. |
+| `ODESSA-006` | Camera | Auxiliary cameras need a curated Aperture selector | `PARTIAL` | `P2` | TRY23 | Enabling Aperture auxiliary cameras exposes working ultrawide ID `3` and macro ID `4`, but also monochrome depth ID `2` and duplicate main-camera processing IDs `6` and `7`. Candidate now ignores `2`, `6`, and `7`; rebuild and hardware-test that only main, ultrawide, and macro remain. |
 
 Priorities are `P0` (device safety/data loss), `P1` (core phone function or boot),
 `P2` (important feature), and `P3` (minor or cosmetic).
