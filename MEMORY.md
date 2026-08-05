@@ -196,6 +196,17 @@ re-verify device state before any device-changing command.
   contain TRY19 bytes. Recorded historical hashes remain valid evidence, but the
   old files are not preserved artifacts. Future named artifacts must be real
   copies/reflinks with distinct inodes and rechecked hashes.
+- **TRY24 radio/audio result (2026-08-04):** neither radio driver was directly
+  changed by OpenELA/BPF. Packaging the branch-current vendor mountpoints mounts
+  `modem`, `bluetooth`, `dsp`, and `fsg`; Bluetooth is hardware-verified working
+  and the user reports audio now works. Wi-Fi remains failed: firmware and board
+  data mount and `wlan.ko` registers, but ICNSS has `SERVER_ARRIVE=0` and no
+  `wlan0`. Root cause is commit `31eea31c` removing legacy integration while the
+  product never inherited `hardware/qcom-caf/common/common.mk`; consequently all
+  `/vendor/rfs` links are absent. **TRY25 hardware-verifies the inheritance fix:**
+  Wi-Fi works, `wlan0` and `p2p0` exist, and the MSM WPSS/MPSS RFS trees are
+  installed. Exact OTA SHA-256 is
+  `abbc875d67411b2b197b24392ec8ee939f4bf07c67d058c780090d3d8ce9b1ca`.
 - **Fallback if the backport fails:** LineageOS 21 (Android 14), the newest branch an
   unmodified 4.14 kernel satisfies. A 5.10/6.x rebase is rejected (no SM6150/SM7150
   BSP exists at any 5.x; vendor blobs are built against 4.14 UAPI).
@@ -286,7 +297,7 @@ re-verify device state before any device-changing command.
   (SHA-256 `2eebc8ee17bcbc3a28d96b7b1dbf1b6769c6281d437194fbf582f0e2b365fdb6`);
   lists revalidated with zero missing/mismatched files.
 - Repos live on `lineage-23.2` branches. `manifests/odessa.xml` pins the published
-  `ARLBR10` Odessa (`fc7495d`), SM6150 common (`f64cb3e5`), BPF-backported kernel
+  `ARLBR10` Odessa (`fc7495d`), SM6150 common (`e4b352ff`), BPF-backported kernel
   (`56146fa`), and bootctrl (`6a85678`) commits. The two vendor
   repositories remain local/private and are not manifest projects. Never commit
   logs or captures containing identifiers.

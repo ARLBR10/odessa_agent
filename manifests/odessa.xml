@@ -13,7 +13,7 @@
   <project path="device/motorola/sm6150-common"
            name="ARLBR10/android_device_motorola_sm6150-common"
            remote="github"
-           revision="f64cb3e53f497b3c6af7041a5913a13c25d619b2" />
+           revision="e4b352ffa8dc426e7b02c41e7a99cdb198cb480e" />
   <project path="kernel/motorola/sm6150"
             name="ARLBR10/android_kernel_motorola_sm6150"
             remote="github"

@@ -1,6 +1,6 @@
 # Odessa Device State
 
-Last updated: 2026-08-04 (TRY23 user testing)
+Last updated: 2026-08-04 (TRY25 Wi-Fi verification)
 
 This file is the current hardware and regression dashboard for the physical
 Motorola Moto G9 Plus (`odessa`). It records observations, not assumptions.
@@ -13,13 +13,13 @@ Detailed commands, logs, hashes, and investigations belong in `journals/` or
 | --- | --- |
 | Device | Moto G9 Plus (`odessa`) |
 | Model/SKU | `XT2087-1`, Brazil |
-| Build | `lineage-23.2-20260804-TRY23-UNOFFICIAL-odessa.zip` |
-| OTA SHA-256 at verification | `7165120cfa144730deafe104432b03c47c222ca75c5f575bcca7650e00746309` |
-| Exact payload Recovery SHA-256 | `2b80df2a644340dc9391b7237b849b36ea6f4daa793c8763591a5956f7f6a171` |
-| Installation | User reports TRY23 update installed successfully |
-| Security context | Unofficial userdebug build; final release security validation not complete |
+| Build | `lineage-23.2-20260805-TRY25-UNOFFICIAL-odessa.zip`; build timestamp `1785888497` |
+| OTA SHA-256 at verification | `abbc875d67411b2b197b24392ec8ee939f4bf07c67d058c780090d3d8ce9b1ca` |
+| Exact payload Recovery SHA-256 | Not reverified for TRY25 |
+| Installation | User installed TRY25; Android is running from slot A with the exact build timestamp |
+| Security context | Unofficial userdebug build; rooted debugging was temporarily enabled for diagnosis and adbd was returned to non-root |
 
-The named TRY23 ZIP shares the mutable `lineage_odessa-ota.zip` inode. The hash
+The named TRY25 ZIP shares the mutable `lineage_odessa-ota.zip` inode. The hash
 above identifies the bytes verified before installation, but the filename is not
 a preserved artifact and must not be trusted after another build.
 
@@ -37,18 +37,18 @@ a preserved artifact and must not be trusted after another build.
 
 | Area | Test | Status | Evidence / Notes |
 | --- | --- | --- | --- |
-| Boot | Android reaches LineageOS UI | `PASS` | TRY18 reached Setup Wizard; user reports installed TRY23 works |
-| Boot | BPF loader completes | `PASS` | Hardware markers reached `bpf-done`; see `MEMORY.md` |
-| Recovery | RAM-boot exact Recovery | `PASS` | TRY23 exact payload Recovery booted |
-| Recovery | Installed Recovery boot | `UNTESTED` | TRY23 was RAM-booted; installed-partition Recovery has not been separately reported |
-| Update | A/B OTA installation | `PASS` | User reports TRY23 update installed successfully |
-| Update | Automatic first boot after installation | `FAIL` | User reports stock partition-table flashing is still required before initial boot; `ODESSA-004` |
-| Display | Panel output and boot animation | `PASS` | GPU/display path reached Setup Wizard and TRY23 UI |
-| Graphics | Adreno acceleration initializes | `PASS` | TRY23 reaches rendered Android UI; ZAP fix was originally isolated in TRY15 |
-| Input | Touchscreen in Recovery | `PASS` | TRY23 auto-loads modules; touch works without ADB commands |
-| Input | Touchscreen in Android | `PASS` | User reports touch works after installing TRY23 |
-| Input | Physical buttons | `PARTIAL` | Recovery navigation observed; full key/long-press matrix not run |
-| Input | Vibration / haptics | `PASS` | User reports phone vibration works on TRY23 |
+| Boot | Android reaches LineageOS UI | `PASS` | TRY25 slot A reached Android and completed boot |
+| Boot | BPF loader completes | `PASS` | TRY25 reached Android; earlier direct marker evidence is from the TRY11-era build |
+| Recovery | RAM-boot exact Recovery | `UNTESTED` | Latest direct evidence is TRY23 |
+| Recovery | Installed Recovery boot | `UNTESTED` | |
+| Update | A/B OTA installation | `PASS` | User installed TRY25 and its exact timestamp is running from slot A |
+| Update | Automatic first boot after installation | `UNTESTED` | Latest failure evidence is TRY24, when stock partition-table restoration returned to old slot A; `ODESSA-004` remains open |
+| Display | Panel output and boot animation | `PASS` | TRY25 rendered Android UI |
+| Graphics | Adreno acceleration initializes | `PASS` | TRY25 rendered Android UI; detailed GPU validation remains from TRY15 |
+| Input | Touchscreen in Recovery | `UNTESTED` | Latest direct evidence is TRY23 |
+| Input | Touchscreen in Android | `PASS` | User interacted with TRY25 Android and Wi-Fi controls |
+| Input | Physical buttons | `UNTESTED` | Latest partial evidence is from an older build |
+| Input | Vibration / haptics | `UNTESTED` | Latest direct evidence is TRY23 |
 | Encryption | Fresh userdata encryption and unlock | `UNTESTED` | Must be tested on the current baseline |
 | Update | Slot fallback and failed-update behavior | `UNTESTED` | Successful update alone does not validate fallback |
 | Update | In-system updater flow | `UNTESTED` | Current update path details not fully recorded |
@@ -57,22 +57,22 @@ a preserved artifact and must not be trusted after another build.
 | Telephony | SMS/MMS | `UNTESTED` | |
 | Telephony | Mobile data | `UNTESTED` | Test LTE attachment and data transfer |
 | Telephony | Emergency calling | `UNTESTED` | Use a lawful non-disruptive validation plan; do not place test emergency calls casually |
-| Connectivity | Wi-Fi | `FAIL` | User reports Wi-Fi does not work on TRY23; `ODESSA-001` |
-| Connectivity | Bluetooth | `FAIL` | User reports Bluetooth does not work on TRY23; `ODESSA-002` |
+| Connectivity | Wi-Fi | `PASS` | User reports Wi-Fi works on TRY25; ADB confirms `wlan0`, `p2p0`, and the required MSM WPSS/MPSS RFS trees |
+| Connectivity | Bluetooth | `UNTESTED` | Latest direct pass is TRY24 after `/vendor/bt_firmware` mounted |
 | Connectivity | NFC | `UNTESTED` | Regional SKU support must be verified |
-| Connectivity | USB data / ADB in Android | `UNTESTED` | Recovery ADB is separately proven |
-| Audio | Speaker, earpiece, microphones, headset | `PARTIAL` | scrcpy audio capture throws `UnsupportedOperationException`; physical audio paths remain untested; `ODESSA-005` |
-| Camera | Front camera preview and capture | `PASS` | User reports the front camera works on TRY23 |
-| Camera | Primary rear camera preview and capture | `PASS` | User reports one rear camera works on TRY23 |
-| Camera | Auxiliary rear cameras | `FAIL` | Additional rear cameras are missing from the camera interface; `ODESSA-006` |
-| Camera | Camera flash | `PASS` | User reports flash works on TRY23 |
+| Connectivity | USB data / ADB in Android | `PASS` | Android ADB used to verify TRY25 |
+| Audio | Speaker, earpiece, microphones, headset | `UNTESTED` | Latest partial evidence is TRY24 after `/vendor/dsp` mounted; `ODESSA-005` remains open |
+| Camera | Front camera preview and capture | `UNTESTED` | Latest direct evidence is TRY23 |
+| Camera | Primary rear camera preview and capture | `UNTESTED` | Latest direct evidence is TRY23 |
+| Camera | Auxiliary rear cameras | `UNTESTED` | Latest failure evidence is TRY23; `ODESSA-006` remains open |
+| Camera | Camera flash | `UNTESTED` | Latest direct evidence is TRY23 |
 | Camera | Video recording and playback | `UNTESTED` | Test front/rear recording, audio, stabilization, and common resolutions |
 | Sensors | Accelerometer, gyro, light, proximity, compass | `UNTESTED` | |
 | Location | GNSS fix | `UNTESTED` | Test cold and warm fixes without leaking location data |
-| Biometrics | Fingerprint enrollment and unlock | `FAIL` | Fingerprint controls are absent from Settings; sensor detection is unconfirmed; `ODESSA-003` |
+| Biometrics | Fingerprint enrollment and unlock | `UNTESTED` | Latest failure evidence is TRY23; `ODESSA-003` remains open |
 | Power | Charging, battery reporting, thermal behavior | `UNTESTED` | Include powered-off charging and USB current behavior |
 | Power | Suspend, wake, and overnight idle | `UNTESTED` | |
-| Power | Screen sleep | `PASS` | User reports the display enters sleep on TRY23; wake and deep suspend remain separate tests |
+| Power | Screen sleep | `UNTESTED` | Latest direct evidence is TRY23 |
 | Media | Hardware video encode/decode | `UNTESTED` | |
 | Security | SELinux enforcing with no broad bypass | `UNTESTED` | Userdebug observations do not establish release readiness |
 | Security | Verified Boot and release signing | `UNTESTED` | Current artifacts use bring-up signing/security limitations |
@@ -84,8 +84,6 @@ a preserved artifact and must not be trusted after another build.
 
 | ID | Area | Summary | Status | Priority | First seen | Evidence / Next step |
 | --- | --- | --- | --- | --- | --- | --- |
-| `ODESSA-001` | Wi-Fi | Wi-Fi does not work | `FAIL` | `P2` | TRY23 | User report. Capture framework, HAL, kernel, firmware-loading, and module state before attributing it to the Xiaomi networking/BPF import. |
-| `ODESSA-002` | Bluetooth | Bluetooth does not work | `FAIL` | `P2` | TRY23 | User report. Capture Bluetooth service/HAL state, UART transport, firmware, and kernel logs; investigate shared causes with Wi-Fi without assuming one. |
 | `ODESSA-003` | Fingerprint | Fingerprint option is absent from Settings | `FAIL` | `P2` | TRY23 | User report. Determine installed sensor variant, kernel device/module state, HAL/service registration, VINTF, and framework feature declaration. |
 | `ODESSA-004` | Install / boot control | Initial boot after installation requires manually flashing the stock partition table | `FAIL` | `P1` | TRY23 | User report. Preserve pre/post-install GPT captures and bootloader state; re-check target-slot boot attributes and the running Recovery boot-control HAL before any further partition-table operation. |
 | `ODESSA-005` | Audio | scrcpy cannot create an `AudioRecord`; overall audio status unknown | `PARTIAL` | `P2` | TRY23 | Reported exception: `java.lang.UnsupportedOperationException: Cannot create AudioRecord`. Test local media playback/recording and calls separately, then collect AudioFlinger/audio HAL state and scrcpy version/options. |
@@ -103,6 +101,8 @@ Priorities are `P0` (device safety/data loss), `P1` (core phone function or boot
 | `ODESSA-R003` | Obsolete HIDL memtrack blocked SystemServer | TRY16 | Reached `bootAnimationComplete` |
 | `ODESSA-R004` | Unsupported LiveDisplay SDM interfaces blocked SystemServer | TRY18 | Reached Setup Wizard |
 | `ODESSA-R005` | Recovery and Android touchscreen modules were rejected by a stale cached kernel certificate | TRY22/TRY23 | TRY22 manual module load and touch passed; TRY23 automatic touch passed after update |
+| `ODESSA-002` | Bluetooth firmware partition was unavailable because its vendor mountpoint was omitted | TRY24 | Firmware partition mounted; user enabled and tested Bluetooth successfully |
+| `ODESSA-001` | Wi-Fi firmware server never arrived because Qualcomm RFS links were omitted | TRY25 | User reports Wi-Fi works; ADB confirms `wlan0`, `p2p0`, and installed MSM WPSS/MPSS RFS trees |
 
 ## Update Rules
 
