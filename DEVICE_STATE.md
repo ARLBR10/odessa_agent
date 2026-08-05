@@ -1,6 +1,6 @@
 # Odessa Device State
 
-Last updated: 2026-08-04 (TRY25 Wi-Fi verification)
+Last updated: 2026-08-05 (TRY25 auxiliary-camera APK test)
 
 This file is the current hardware and regression dashboard for the physical
 Motorola Moto G9 Plus (`odessa`). It records observations, not assumptions.
@@ -16,7 +16,7 @@ Detailed commands, logs, hashes, and investigations belong in `journals/` or
 | Build | `lineage-23.2-20260805-TRY25-UNOFFICIAL-odessa.zip`; build timestamp `1785888497` |
 | OTA SHA-256 at verification | `abbc875d67411b2b197b24392ec8ee939f4bf07c67d058c780090d3d8ce9b1ca` |
 | Exact payload Recovery SHA-256 | Not reverified for TRY25 |
-| Installation | User installed TRY25; Android is running from slot A with the exact build timestamp |
+| Installation | User installed TRY25; Android is running from slot A with the exact build timestamp. A locally rebuilt Aperture APK (SHA-256 `c2403a3478c2a51198d5dec633c391baa40057e5927d910f4f59c553f9d46132`) is installed as a userdata system-app update for camera testing. |
 | Security context | Unofficial userdebug build; rooted debugging was temporarily enabled for diagnosis and adbd was returned to non-root |
 
 The named TRY25 ZIP shares the mutable `lineage_odessa-ota.zip` inode. The hash
@@ -58,13 +58,13 @@ a preserved artifact and must not be trusted after another build.
 | Telephony | Mobile data | `UNTESTED` | Test LTE attachment and data transfer |
 | Telephony | Emergency calling | `UNTESTED` | Use a lawful non-disruptive validation plan; do not place test emergency calls casually |
 | Connectivity | Wi-Fi | `PASS` | User reports Wi-Fi works on TRY25; ADB confirms `wlan0`, `p2p0`, and the required MSM WPSS/MPSS RFS trees |
-| Connectivity | Bluetooth | `UNTESTED` | Latest direct pass is TRY24 after `/vendor/bt_firmware` mounted |
+| Connectivity | Bluetooth | `PASS` | User reports Bluetooth works on TRY25; `/vendor/bt_firmware` is mounted |
 | Connectivity | NFC | `UNTESTED` | Regional SKU support must be verified |
 | Connectivity | USB data / ADB in Android | `PASS` | Android ADB used to verify TRY25 |
 | Audio | Speaker, earpiece, microphones, headset | `PARTIAL` | User reports audio works on TRY25 with `/vendor/dsp` mounted; exact speaker, earpiece, microphone, headset, call-audio, and scrcpy paths need separate tests; `ODESSA-005` |
 | Camera | Front camera preview and capture | `UNTESTED` | Latest direct evidence is TRY23 |
 | Camera | Primary rear camera preview and capture | `UNTESTED` | Latest direct evidence is TRY23 |
-| Camera | Auxiliary rear cameras | `UNTESTED` | Latest failure evidence is TRY23; `ODESSA-006` remains open |
+| Camera | Auxiliary rear cameras | `PARTIAL` | On TRY25 with the local Aperture update, the user hardware-tested working color ultrawide and macro selectors. The unfiltered test also exposed the monochrome depth sensor and two duplicate main-camera processing endpoints; the refined ID exclusions remain unbuilt and untested. `ODESSA-006` remains open. |
 | Camera | Camera flash | `UNTESTED` | Latest direct evidence is TRY23 |
 | Camera | Video recording and playback | `UNTESTED` | Test front/rear recording, audio, stabilization, and common resolutions |
 | Sensors | Accelerometer, gyro, light, proximity, compass | `UNTESTED` | |
@@ -101,7 +101,7 @@ Priorities are `P0` (device safety/data loss), `P1` (core phone function or boot
 | `ODESSA-R003` | Obsolete HIDL memtrack blocked SystemServer | TRY16 | Reached `bootAnimationComplete` |
 | `ODESSA-R004` | Unsupported LiveDisplay SDM interfaces blocked SystemServer | TRY18 | Reached Setup Wizard |
 | `ODESSA-R005` | Recovery and Android touchscreen modules were rejected by a stale cached kernel certificate | TRY22/TRY23 | TRY22 manual module load and touch passed; TRY23 automatic touch passed after update |
-| `ODESSA-002` | Bluetooth firmware partition was unavailable because its vendor mountpoint was omitted | TRY24 | Firmware partition mounted; user enabled and tested Bluetooth successfully |
+| `ODESSA-002` | Bluetooth firmware partition was unavailable because its vendor mountpoint was omitted | TRY24 | Firmware partition mounted; user enabled and tested Bluetooth successfully on TRY24 and reports it working on TRY25 |
 | `ODESSA-001` | Wi-Fi firmware server never arrived because Qualcomm RFS links were omitted | TRY25 | User reports Wi-Fi works; ADB confirms `wlan0`, `p2p0`, and installed MSM WPSS/MPSS RFS trees |
 
 ## Update Rules
