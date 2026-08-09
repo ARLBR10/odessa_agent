@@ -207,6 +207,133 @@ re-verify device state before any device-changing command.
   Wi-Fi works, `wlan0` and `p2p0` exist, and the MSM WPSS/MPSS RFS trees are
   installed. Exact OTA SHA-256 is
   `abbc875d67411b2b197b24392ec8ee939f4bf07c67d058c780090d3d8ce9b1ca`.
+- **TRY25 GNSS fix (2026-08-05):** the GNSS HAL and companion daemons ran but
+  repeated GPSTest requests produced no location. A focused overlay test of both
+  rebuilt `libgnss.so` architectures hardware-verifies the fix: stop the legacy
+  HAL from overwriting modem-MBN-owned LPP/LPPe configuration, matching Qualcomm
+  `a032093`. The user reports GNSS works after reboot. The common-tree source
+  change remains uncommitted. TRY26 packages the exact hardware-tested library
+  hashes; its ZIP, VINTF, and all seven payload partitions are artifact-verified.
+  After sideload, the user restored stock GPT
+  with `fastboot flash partition <RPAS31 package>/gpt.bin`; read-only ADB proved
+  Android returned to slot-A TRY25 timestamp `1785888497`, not TRY26 `1785968028`.
+  A subsequent manual slot-B attempt also fell back to fully booted TRY25 on A.
+  Fastboot then showed B `successful:no`, `unbootable:no`, `retry-count:0`, while
+  A remained successful; TRY26 was correctly targeted to B but exhausted retries.
+  With explicit approval, `fastboot set_active b` reset B to 7 retries; runtime
+  then proved slot B and timestamp `1785968028`, and the user hardware-validated
+  working GPS. Thus TRY26 packages and runs the fix; `ODESSA-004` remains open.
+  Preserved OTA SHA-256 is
+  `788edc6711e0e9d923b0bce3efd4bbb46ae9fcc1ea908f48337804da08816f35`;
+  exact details are in `journals/05-08-2026.md`.
+- **TRY26 spontaneous-reboot root cause captured (2026-08-06):** four preserved
+  `SYSTEM_LAST_KMSG` entries from Aug 5-6 have the identical fatal path. A UFS
+  clock-gating worker requests bus vote address `0x50000`; RPMh first reports a
+  busy TCS, then receives no AOSS response for four 10-second waits. The vendor
+  driver deliberately executes `BUG()` at `drivers/soc/qcom/rpmh.c:209`, causing
+  `Kernel panic - not syncing: Fatal exception` and a reboot five seconds later.
+  Crash uptimes were about 93 s, 1,708 s, 93 s, and 1,818 s. This is
+  `ODESSA-009`, not a framework or SurfaceFlinger restart. The user also reports
+  black/unresponsive-screen episodes (`ODESSA-010`); they plausibly overlap the
+  40-50 second RPMh stall but the logs do not yet prove every black screen has
+  that cause. The running system was TRY26 timestamp `1785968028` on slot A,
+  with ADB root disabled and a separately installed Magisk service visible in
+  preserved boot logs, so an unrooted reproduction is still required.
+- **Vendor firmware ID drift (2026-08-06):** the validated restore package is
+  `ODESSA_RETAIL RPAS31.Q2-59-17-4-3-9` (Android 11), but the phone now reports
+  `ro.build.fingerprint = motorola/odessa_retail/odessa:11/RPAS31.Q2-59-17-4-5-5/af8e3:user/release-keys`
+  on every boot since the GApps/Magisk session. The 4-5-5 vendor image has not
+  been re-validated the same way 4-3-9 was. Because `ODESSA-009` is an AOSS/RPMh
+  stall, it may be a 4-5-5 vendor regression rather than an Odessa bring-up
+  regression; do not close `ODESSA-009` without re-running the panic on 4-3-9
+  or formally validating 4-5-5. Tracked as `ODESSA-012` (P2); the charter's
+  `Firmware` section requires us to assert on known-working firmware.
+- **Add-on install path hardware-verified (2026-08-06):** the user sideloaded
+  MindTheGapps and Magisk as addons over the running TRY26 slot-A system.
+  `pm list packages` shows `com.google.android.gms` 26.29.32,
+  `com.android.vending` 52.5.22-34, `com.google.android.gsf` 16-13343139, and
+  the `com.mtg.*` MindTheGapps overlays. `ps -A` shows `magiskd` (PID 1285);
+  `/product/bin/su` symlinks to `./magisk`; from an unprivileged `adb shell`,
+  `su -c id` returns `uid=0(root) gid=0(root) context=u:r:magisk:s0`;
+  `magisk -V` = 30700 with Denylist enforced. Boot cmdline reports
+  `androidboot.verifiedbootstate=orange` (the expected state for the bring-up
+  vbmeta `--flags 3` documented above). This satisfies the charter's
+  `Add-on packages` requirement for LOS 19+. Neither addon is bundled in the
+  base ROM; the wiki should document MindTheGapps and the Magisk patch target.
+- **Charter-MUST sensors, fingerprint, and display verified on TRY26
+  (2026-08-06):** `dumpsys sensorservice` shows 39 h/w sensors, 39 running, 0
+  disabled. Accelerometer (`icm4x6xx` TDK-Invensense), gyroscope (same chip),
+  ambient light (`stk_stk3a5x` sensortek), and proximity (same chip) are
+  present and have live framework clients (AutoBrightnessController,
+  BrightnessTracker, ThresholdSensorImpl, WindowOrientationListener,
+  FaceDownDetector). Magnetometer (`feature:android.hardware.sensor.compass`)
+  is declared but the `android.sensor.magnetic_field` handle is missing and
+  9-axis fusion reports 0 clients; `ODESSA-011` (P3). Display is
+  1080×2400 @ 420 dpi @ 60 Hz, matching stock spec, with HDR10/HLG/HDR10+
+  declared. `dumpsys fingerprint` shows `FingerprintProvider/defaultHIDL`
+  running with one enrolled print and 0 HAL deaths; resolves `ODESSA-003`.
+- **Vendor security-patch display is intentionally not overridden
+  (2026-08-06):** `ro.build.version.security_patch = 2026-07-01` (LineageOS
+  platform) and `ro.vendor.build.security_patch = 2022-05-01` (stock Motorola
+  vendor image baked into our `vendor.img`). Settings → Trust shows
+  "Platform: Up-to-date / Vendor: Out-of-date" because the 4-year gap exceeds
+  the framework's threshold. The display is honest — Motorola has not shipped
+  a new vendor image for `odessa` (XT2087-1) since 2022, so the value cannot
+  be raised by anything we control. **User decision (2026-08-06): do not
+  override `ro.vendor.build.security_patch`.** The override would be purely
+  cosmetic and would misrepresent Motorola's actual vendor-patch state.
+  Re-evaluate if/when the device is ported to LineageOS proper — an upstream
+  submission may need a defined, defensible vendor patch string — but no
+  change is required for the bring-up.
+- **TRY26 charter hardware pass (2026-08-08):** exact build timestamp
+  `1785968028` hardware-validates phone-speaker media, built-in microphone,
+  3.5 mm output, Bluetooth A2DP and call audio, aptX HD negotiation, all curated
+  Aperture cameras plus front/rear video and flash, Qualcomm hardware decode for
+  H.264/HEVC/VP8/VP9, and live HDR10/BT.2020 PQ playback. Product Aperture v16
+  (not a userdata update) exposes only main, ultrawide, and macro, resolving
+  `ODESSA-006`. Wi-Fi had validated Internet; FM remains unavailable because no
+  client app is installed.
+- **TRY26 USB/tethering blockers (2026-08-08):** SoftAP starts and is visible,
+  but Settings repeatedly ANRs in `TetheringManager.getTetherableUsbRegexs()`
+  waiting for tethering startup (`ODESSA-008`). MTP and RNDIS requests both fall
+  back to ADB because Android finds no USB Gadget AIDL/HIDL HAL and cannot open
+  MTP control (`ODESSA-013`). The user's reboot during testing was manual; no new
+  spontaneous reboot was inferred.
+- **ODESSA-008 root cause (2026-08-08):** a connected hotspot client receives
+  DHCP but no routed Internet because NetworkStack's tethering handler blocks in
+  `OffloadHalHidlImpl.getIOffloadHal()`. Packaged `ipacm` runs and registers
+  `IOffloadConfig` 1.0, but its `IOffloadControl` implementation is 1.1 while the
+  common device manifest declares 1.0; registration fails and HIDL retries
+  forever. The common-tree candidate updates only the control declaration to
+  1.1, matching the built implementation and current SM6150 device trees.
+  TRY27 hardware-verifies that fix: `dumpsys tethering` responds in 37-82 ms,
+  Settings opens in about 0.33 seconds, and offload initialization proceeds.
+  Hotspot still rolls back because netd loses its control pipe to an exited
+  `dnsmasq`. Android 16 bionic's spawn path requires syscall 436
+  `close_range(3, ~0U, CLOSE_RANGE_CLOEXEC)` and exits 127 on failure; the
+  running 4.14 kernel has no `close_range` implementation or syscall-table
+  entry. A focused native/compat ARM backport is now present locally in the
+  kernel tree. TRY28 build timestamp `1786236578` is artifact-verified: ZIP
+  SHA-256
+  `db2283135abbd5192047a05e469ec09911bb51c561b4d82214143257821a97a4`,
+  archive and VINTF pass, all seven exact payload partitions reproduce
+  target-files, and the payload kernel has native and compat syscall-table
+  entry 436 linked to `sys_close_range`. TRY28 was sideloaded from B to A with
+  explicit authorization; Recovery completed, but automatic boot looped until
+  the user flashed `gpt.bin` from validated RPAS31.Q2-59-17-4-3-9, another
+  `ODESSA-004` reproduction. Runtime then proved TRY28 on slot A, SELinux
+  enforcing. **`ODESSA-008` is hardware-resolved:** hotspot stays enabled, a
+  second device has working DNS and routed Internet, `dnsmasq` and `ipacm` stay
+  live, tethering dumpsys responds, and the prior broken-pipe/exit-127 errors are
+  absent. TRY27 OTA SHA-256 is
+  `43f9fa34ff18477ba4def79d8e6a544295a2bce0066e9d92240e8fa08ad80d47`;
+  timestamp `1786222350`, slot B, SELinux enforcing.
+- **TRY26 compliance review (2026-08-08):** no Android userspace proprietary
+  executable is non-PIE; the ET_EXEC matches are Qualcomm firmware images, not
+  host executables. Default unpinned blobs identify the source Tequila ZIP and
+  SHA-256, but pinned non-default `a615_zap` firmware lacks a source comment
+  (`ODESSA-016`). The manifest pins stale kernel/bootctrl commits and cannot
+  reproduce the uncommitted GNSS source fix (`ODESSA-014`).
 - **Fallback if the backport fails:** LineageOS 21 (Android 14), the newest branch an
   unmodified 4.14 kernel satisfies. A 5.10/6.x rebase is rejected (no SM6150/SM7150
   BSP exists at any 5.x; vendor blobs are built against 4.14 UAPI).
