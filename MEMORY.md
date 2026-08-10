@@ -293,6 +293,56 @@ re-verify device state before any device-changing command.
   (not a userdata update) exposes only main, ultrawide, and macro, resolving
   `ODESSA-006`. Wi-Fi had validated Internet; FM remains unavailable because no
   client app is installed.
+- **Encryption path hardware-verified (2026-08-09):** the user confirms the
+  TRY26/MindTheGapps installation followed a fresh userdata format in Lineage
+  Recovery and Trust reported encryption enabled after first boot. Read-only
+  TRY31 runtime checks independently prove file-based encryption, metadata and
+  inline encryption, a PIN credential, and unlocked user-0 CE storage. The
+  encryption matrix row is `PASS` under the carry-forward rule.
+- **24h+ stability, suspend/wake, screen sleep, charging, voice calls, and
+  in-call audio hardware-verified (2026-08-09):** the user reports more than
+  24 h of continuous uptime on slot B (incremental `1786303518`, SELinux
+  enforcing) with no spontaneous reboot; suspend, wake, overnight idle, and
+  screen sleep/wake are stable; the phone charges and the Settings battery
+  panel reports Temperature, Voltage, Capacity, etc.; and a real voice call
+  now goes through end-to-end with full in-call audio. The earlier operator-
+  side Portuguese IVR "not available right now" is no longer reproducing, and
+  the four `ODESSA-009` RPMh/AOSS `BUG()` records from Aug 5-6 do not recur
+  on the current build. The matrix `Boot > Remains running`, `Power >
+  Charging/battery/thermal`, `Power > Suspend/wake/overnight idle`,
+  `Power > Screen sleep and wake`, `Telephony > Voice calls`, and
+  `Audio > Cellular in-call earpiece/mic/speaker` are now `PASS`;
+  `ODESSA-005` is narrowed to secondary mics, echo cancellation, wired
+  inline mic, and USB-C audio. **User decisions on the open issues
+  (2026-08-09):** `ODESSA-009` is demoted P1 → P3 and kept open (kernel
+  `BUG()` still in place, root cause not patched; re-open on confirmed
+  reproduction); `ODESSA-010` (black screen, mostly unresponsive power key)
+  is moved to Resolved Bring-Up Issues on the same 24 h+ stability
+  evidence; `ODESSA-012` (4-5-5 vs 4-3-9 firmware) is kept open with no
+  decision yet, because the firmware's signature and provenance still need
+  to be documented before 4-5-5 can replace 4-3-9 as the validated restore.
+- **The 24h stability conclusion is superseded (2026-08-10):** DropBox contains
+  a later Aug 9 20:56 `SYSTEM_LAST_KMSG` from exact TRY31. After about 101.9
+  minutes, UFS runtime suspend requested RPMh bus vote address `0x50000`; AOSS
+  did not respond, and the unchanged vendor `BUG()` at
+  `drivers/soc/qcom/rpmh.c:209` caused a fatal panic. Unlike the first four
+  `ODESSA-009` traces from `ufshcd_gate_work`, this trace starts at
+  `pm_runtime_work` -> `ufshcd_runtime_suspend` -> `ufshcd_suspend`, proving the
+  defect covers multiple UFS power-down paths. `ODESSA-009` is active at P1;
+  boot endurance is `FAIL` and suspend/idle is `PARTIAL`. The subsequent Aug 10
+  last-kmsg is a clean hardware-key reset, not another kernel crash.
+- **TRY32 mailbox candidate installed (2026-08-10):** comparison with the
+  supported Xiaomi SM6150 reference found Odessa had lost Qualcomm mailbox fix
+  `831c4302961e`. `qcom-rpmh-mailbox` returns `-EAGAIN` for the exact logged
+  `TCS Busy` condition, but Odessa's generic mailbox core dropped it and never
+  resubmitted the queued request, leaving RPMh to wait forever. TRY32 restores
+  the reference retry-after-unlock implementation. The exact payload kernel and
+  object disassembly prove it is packaged. Built-in Updater installed TRY32
+  from B to A, but automatic boot again required validated stock partition-table
+  restoration (`ODESSA-004`). Runtime proves TRY32 timestamp `1786390179`,
+  kernel build `#14`, boot completion, enforcing SELinux, and retained optional
+  MindTheGapps/Magisk addons. `ODESSA-009` remains open pending charging/screen-
+  off reproduction and at least 24 hours of endurance testing.
 - **TRY26 USB/tethering blockers (2026-08-08):** SoftAP starts and is visible,
   but Settings repeatedly ANRs in `TetheringManager.getTetherableUsbRegexs()`
   waiting for tethering startup (`ODESSA-008`). MTP and RNDIS requests both fall
@@ -334,6 +384,54 @@ re-verify device state before any device-changing command.
   SHA-256, but pinned non-default `a615_zap` firmware lacks a source comment
   (`ODESSA-016`). The manifest pins stale kernel/bootctrl commits and cannot
   reproduce the uncommitted GNSS source fix (`ODESSA-014`).
+- **TRY28 SIM and emergency-calling result (2026-08-09):** the user inserted a
+  SIM after the 2026-08-08 charter check. SIM detection is `PASS`. Voice calls
+  reach the radio but the operator returns a Portuguese IVR saying the dialed
+  number is "not available right now" — operator-side, not a ROM regression.
+  Emergency 112 dials through the radio and the same Portuguese IVR states the
+  emergency service is "not available right now"; likely a 4-5-5 vendor firmware
+  regression (ties to `ODESSA-012`). Do not place further emergency-only test
+  calls. Mobile data is `PARTIAL` (SIM now present, no attachment or throughput
+  test yet).
+- **TRY29 Updater and panic-console result (2026-08-09):** the built-in Updater
+  successfully installed TRY29 (`1786303518`) from slot A to B. Automatic boot
+  still looped because of `ODESSA-004`; stock GPT restoration selected A, then
+  manual slot-B selection booted exact TRY29. The config-only panic display is
+  not functional: MSM DRM initializes, but fbdev's stolen scanout BO fails
+  `msm_gem_get_iova()` with `-EINVAL`, so no `fb0` exists. A local candidate
+  now uses a regular scanout BO when KMS has an IOMMU address space and retains
+  stolen memory only for the no-IOMMU path. No deliberate panic was triggered.
+- **TRY30 disproves the BO-allocation theory (2026-08-09):** exact TRY30 is
+  running on slot A, boot-complete and enforcing, but still has no `fb0` and
+  reports the same `msm_gem_get_iova() = -EINVAL`. Source tracing proves generic
+  fbdev passes null `priv->kms->aspace`; downstream SDE instead keeps domains in
+  its own array and exposes them through `get_address_space()`. The stolen/regular
+  allocation change was removed. The next candidate uses the existing
+  `msm_gem_smmu_address_space_get(..., MSM_SMMU_DOMAIN_UNSECURE)` accessor with
+  legacy fallback. Tracked as `ODESSA-017`; no deliberate panic was triggered.
+- **TRY31 panic-display hardware result (2026-08-09):** the SDE-aware address
+  space accessor fixes fbdev registration: runtime has 32-bit MSM `fb0` and no
+  IOVA error. With explicit authorization, SysRq `c` produced a real panic;
+  the panel froze SurfaceFlinger's last frame, showed no kernel text, then
+  rebooted after about five seconds. The phone returned to slot B, boot-complete
+  and enforcing, with boot reason `kernel_panic`. fbcon's private buffer is not
+  the active Android scanout. `ODESSA-017` now requires panic-safe DRM/SDE
+  scanout takeover, not more fbdev configuration.
+- **Panic-screen decision (2026-08-09):** the current LineageOS device-support
+  charter does not require a visible kernel panic screen, fbcon, or DRM panic.
+  The user decided not to pursue this optional feature. Remove the experimental
+  fbdev/fbcon configuration and SDE address-space accessor change from shipping
+  source; retain TRY29-TRY31 results only as historical journal evidence.
+- **Wiki contribution drafted (2026-08-09):** the repo-managed
+  `lineageos/lineage/wiki` checkout has commit `ae3a2caf40d7` on local branch
+  `wiki-odessa`, containing Odessa metadata, generated pages, and prepared
+  full/small device images. It covers only verified model `XT2087-1`, maintainer
+  `ARLBR10`, Android 11 firmware, Motorola unlock, `dtbo`, and separate Recovery.
+  Ruby/Jekyll validation is deferred to the user's Docker run. **Review
+  follow-up:** after Docker validation and once the device/kernel repositories
+  and remaining release blockers satisfy the adding-device gate, upload the Wiki
+  commit to LineageOS Gerrit and add `Wiki Editors` as reviewers. Do not submit
+  it as an official device page before those prerequisites are met.
 - **Fallback if the backport fails:** LineageOS 21 (Android 14), the newest branch an
   unmodified 4.14 kernel satisfies. A 5.10/6.x rebase is rejected (no SM6150/SM7150
   BSP exists at any 5.x; vendor blobs are built against 4.14 UAPI).
@@ -394,6 +492,20 @@ re-verify device state before any device-changing command.
   reached. Confirm by checking the `.o` exists, not by its absence from errors.
   (Cost a wrong "net/core/filter.c compiles" claim on 2026-07-27.)
 - The correct lunch combo is **`lineage_odessa-bp4a-userdebug`**.
+- **Evidence carry-forward (2026-08-09):** a function is `PASS` on the current
+  baseline if its most recent hardware-validated evidence is on an earlier build
+  AND the change under test in the new build does not plausibly affect that
+  function. Charter-MUST build-integrity items (boot, OTA, Recovery install,
+  SELinux, LineageOS Recovery as the install path) are still re-validated on
+  every build. Functions with an open `ODESSA-NNN`, blocked prerequisites, or a
+  code-path-touching change keep their `FAIL` / `PARTIAL` / `BLOCKED` /
+  `UNTESTED` status until the relevant evidence is refreshed. The rule is
+  `DEVICE_STATE.md` Update Rule 7; per-build decisions live in
+  `journals/DD-MM-YYYY.md`. User confirmed the runtime Wi-Fi and Bluetooth MAC
+  addresses match the stock-OS values; the rule lets us keep both rows as
+  `PASS` without re-running an external stock-OS capture (addresses are stable
+  across the entire bring-up and no privacy-safe stock capture exists in the
+  project).
 - **Backport method that made a 1839-file change tractable:** for each file,
   (1) `git diff v4.14.357-openela HEAD -- <file>` to see what vendor content we
   have, (2) confirm the reference carries it (same Android msm-4.14 lineage, so
