@@ -28,6 +28,8 @@ HDR_PENTRY_SIZE = 84
 HDR_PENTRY_CRC = 88
 
 # Offsets within a partition entry.
+E_TYPE_GUID = 0
+E_UNIQUE_GUID = 16
 E_FIRST_LBA = 32
 E_LAST_LBA = 40
 E_ATTR = 48
@@ -148,6 +150,8 @@ class Gpt:
             self.parts.append({
                 "index": i,
                 "name": name,
+                "type_guid": e[E_TYPE_GUID:E_UNIQUE_GUID],
+                "unique_guid": e[E_UNIQUE_GUID:E_FIRST_LBA],
                 "first": first,
                 "last": last,
                 "attr": u64(e, E_ATTR),
@@ -218,11 +222,16 @@ def diff(before, after):
                     f"  !{idx} layout changed: "
                     f"{x['name']} {x['first']}-{x['last']} -> "
                     f"{y['name']} {y['first']}-{y['last']}")
-            elif x["ab"] != y["ab"]:
-                lines.append(
-                    f"   {idx} {x['name']:<20} ab 0x{x['ab']:02x} "
-                    f"({decode_ab(x['ab'])}) -> 0x{y['ab']:02x} "
-                    f"({decode_ab(y['ab'])})")
+            else:
+                if x["type_guid"] != y["type_guid"]:
+                    lines.append(f"  !{idx} {x['name']} type GUID changed")
+                if x["unique_guid"] != y["unique_guid"]:
+                    lines.append(f"  !{idx} {x['name']} unique GUID changed")
+                if x["ab"] != y["ab"]:
+                    lines.append(
+                        f"   {idx} {x['name']:<20} ab 0x{x['ab']:02x} "
+                        f"({decode_ab(x['ab'])}) -> 0x{y['ab']:02x} "
+                        f"({decode_ab(y['ab'])})")
 
         if lines:
             any_change = True
