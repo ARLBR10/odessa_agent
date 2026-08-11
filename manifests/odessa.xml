@@ -13,7 +13,7 @@
   <project path="device/motorola/sm6150-common"
            name="ARLBR10/android_device_motorola_sm6150-common"
            remote="github"
-           revision="e4b352ffa8dc426e7b02c41e7a99cdb198cb480e" />
+           revision="1c45107ecb027eef49777ed57bbe1f7fcb4c1bb5" />
   <project path="kernel/motorola/sm6150"
             name="ARLBR10/android_kernel_motorola_sm6150"
             remote="github"
@@ -28,17 +28,18 @@
   <!-- Fork of the QTI boot control HAL. Upstream assumes that on UFS the
        xbl, xbl_config, multiimgoem and multiimgqti partitions are selected
        by the boot LUN rather than by their GPT slot attributes, and excludes
-       them from every slot-attribute update. That is false on odessa: MBM
-       switches all 24 A/B partitions by GPT attribute and never touches
-       bBootLunEn, so excluding four of them left a split boot chain and the
-       bootloader refused to enumerate the partition table at all. See
+       them from every slot-attribute update. That is false on odessa: all 24
+       A/B partitions must follow the target by GPT attribute, and bBootLunEn
+       must select the same side. Excluding four partitions created a split boot
+       chain and the bootloader refused to enumerate the partition table. See
        docs/handoff-20260725-bootloop.md; the earlier
        docs/xbl-unbootable-root-cause-20260724.md conclusion was wrong.
-       Forked from LineageOS 846dfb0 so the fix survives repo sync and the
-       build stays reproducible. -->
+       Boot attributes use Motorola's hardware-verified hybrid encoding and
+       preserve a successful inactive fallback. Forked from LineageOS 846dfb0
+       so the hardware-verified fix survives repo sync. -->
   <remove-project name="LineageOS/android_hardware_qcom_bootctrl" />
   <project path="hardware/qcom-caf/bootctrl"
            name="ARLBR10/android_hardware_qcom_bootctrl"
            remote="github"
-           revision="6a85678788e1331f9a2dde385869e3719b064912" />
+           revision="9ccc4a788eede6830cbe0de57df3ccf373d4a002" />
 </manifest>

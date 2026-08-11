@@ -1,6 +1,6 @@
 # Odessa Device State
 
-Last updated: 2026-08-10 (TRY32 mailbox-retry candidate installed on slot A)
+Last updated: 2026-08-11 (TRY34 hardware-verified ODESSA-004 fix)
 
 This file is the current hardware and regression dashboard for the physical
 Motorola Moto G9 Plus (`odessa`). It records observations, not assumptions.
@@ -13,17 +13,17 @@ Detailed commands, logs, hashes, and investigations belong in `journals/` or
 | --- | --- |
 | Device | Moto G9 Plus (`odessa`) |
 | Model/SKU | `XT2087-1`, Brazil |
-| Build | `lineage-23.2-20260810-TRY32-UNOFFICIAL-odessa.zip`; timestamp `1786390179` |
-| OTA SHA-256 at verification | `eee7491f90bf50e7528be653b167a994ad7056a93221441e87f2df75c1b8a534` |
-| Exact payload Recovery SHA-256 | `ba17e25cfb50bf7ed0141ca4d66a2db1e18cbab6395dc7b8fbbcb25d7eab10e7` |
-| Installation | User first installed through Lineage Recovery, hit the known fastboot loop, restored the validated stock partition table, and likely selected the old slot. The user then installed TRY32 through the built-in Updater; automatic boot again reached the bootloader until another stock partition-table restore. Read-only ADB proves exact TRY32 on slot A, boot complete and enforcing. |
-| Security context | Unofficial userdebug build; SELinux is enforcing. MindTheGapps and Magisk are separately installed post-OTA addons and are active on the current runtime. |
+| Build | `lineage-23.2-20260811-TRY34-UNOFFICIAL-odessa.zip`; timestamp `1786476871` |
+| OTA SHA-256 at verification | `620b1bad2d3cd0a431824340978e8a81e5ad645bf21b9d8d68a616cdca33a41c` |
+| Exact payload Recovery SHA-256 | `83a6697aea8f491e2aa563feb9c5118864cf0313a627b298ed70105dde8d32b3` |
+| Installation | Exact TRY34 Recovery sideload installed A-to-B with status 0; all seven hashes passed, GPT and boot LUN switched together, and B booted automatically. The user then installed the same TRY34 ZIP through the built-in Updater B-to-A; exact TRY34 A also reached boot complete without manual slot selection. Current runtime is slot A. |
+| Security context | Unofficial userdebug base ROM; SELinux is enforcing, verified-boot state is orange, and file-based encryption remains active. Optional MindTheGapps and Magisk addons are not installed on current TRY34. |
 
-TRY32 is preserved as a single-link Btrfs reflink and its archive test passes.
-All seven payload partitions reproduce target-files. Its exact payload kernel
-matches the newly built `Image`, and disassembly proves the Qualcomm mailbox
-`-EAGAIN` retry candidate is compiled. Hardware endurance verification is
-pending.
+TRY34 OTA and exact payload Recovery are preserved as single-link files. ZIP,
+payload, target-files, VINTF, binary disassembly, Recovery runtime, installation,
+automatic activation in both directions, boot-LUN transition, Android boot
+completion, target-slot success marking, encryption, and SELinux enforcement are
+all verified.
 
 ## Status Values
 
@@ -39,13 +39,13 @@ pending.
 
 | Area | Test | Status | Evidence / Notes |
 | --- | --- | --- | --- |
-| Boot | Android reaches LineageOS UI | `PASS` | Read-only ADB proves TRY32 timestamp `1786390179` running on slot A with `sys.boot_completed=1` |
+| Boot | Android reaches LineageOS UI | `PASS` | Exact TRY34 timestamp `1786476871` reached `sys.boot_completed=1` on automatically selected B after Recovery sideload and then on automatically selected A after built-in Updater |
 | Boot | Remains running without spontaneous reboot | `FAIL` | TRY32 contains the focused fix for `ODESSA-009`, but the current observation window is too short to verify it. Prior TRY31 failed after about 101.9 minutes. Keep `FAIL` until the charging/screen-off reproduction and endurance window pass. |
 | Boot | BPF loader completes | `PASS` | TRY31 reached Android, which requires the loader to complete |
-| Recovery | RAM-boot exact Recovery | `PASS` | Per Update Rule 7, TRY23 RAM-boot evidence carries forward. The exact-Recovery install on TRY28 itself proved the image boots into a usable Recovery. |
-| Recovery | Installed Recovery boot | `PASS` | Per Update Rule 7, the user repeatedly boots the installed Recovery to perform sideloads; this is how TRY27 and TRY28 were installed. |
-| Update | A/B OTA installation | `PASS` | Built-in Updater installed exact TRY32 from slot B to slot A; runtime timestamp `1786390179` proves the target payload runs |
-| Update | Automatic first boot after installation | `FAIL` | TRY32 again reached a bootloader/fastboot loop until the user restored the validated stock partition table; `ODESSA-004` |
+| Recovery | RAM-boot exact Recovery | `PASS` | Exact TRY34 payload Recovery RAM-booted on source A; incremental, SELinux state, and boot-service hash matched the verified package |
+| Recovery | Installed Recovery boot | `PASS` | Exact payload Recovery is byte-identical to the RAM-booted image and was written to `recovery_b` with its hash verified by Update Engine; prior installed-Recovery boot evidence carries forward |
+| Update | A/B OTA installation | `PASS` | Exact TRY34 Recovery installed the verified full payload A-to-B with status 0 and rehashed all seven targets; built-in Updater then installed the same package B-to-A successfully |
+| Update | Automatic first boot after installation | `PASS` | TRY34 switched all XBL-chain GPT attributes and matching UFS boot LUN; exact TRY34 booted B after Recovery sideload and A after built-in Updater without `fastboot set_active`; resolves `ODESSA-004` |
 | Display | Panel output and boot animation | `PASS` | TRY31 reaches Android UI on slot B and returned normally after the panic reboot |
 | Display | Stock resolution (1080×2400) | `PASS` | Per Update Rule 7, TRY26 measured 1080×2400; the panel DSI configuration is unchanged in TRY28. |
 | Display | Stock density (420 dpi) | `PASS` | Per Update Rule 7, TRY26 measured 420 dpi; the density is unchanged in TRY28. |
@@ -56,8 +56,8 @@ pending.
 | Input | Physical buttons | `PASS` | User-confirmed on 2026-08-09: power, volume up, and volume down behave as expected; the long-press path to Recovery (Volume Down + Power) works. |
 | Input | Vibration / haptics | `PASS` | User-confirmed on 2026-08-09: vibe driver responds to incoming call, notification, and explicit test patterns. The actuator path is unblocked end-to-end; `ODESSA-010` (black screen with mostly unresponsive power key) is now resolved. |
 | Encryption | File-based encryption and credential unlock | `PASS` | User confirms the TRY26/MindTheGapps installation followed a fresh userdata format in Lineage Recovery and Trust reported encryption enabled after first boot. TRY31 runtime independently reports `ro.crypto.state=encrypted`, `ro.crypto.type=file`, metadata encryption enabled, inline-encrypted `/data`, a PIN credential, and user 0 `RUNNING_UNLOCKED` with its CE mount active. Encryption configuration is unchanged, so TRY26 fresh-format evidence carries forward under Update Rule 7. |
-| Update | Slot fallback and failed-update behavior | `PARTIAL` | Manual slot fallback (validated stock `gpt.bin` + `fastboot set_active`) works; automatic target-slot activation after a status-0 OTA does not. See `ODESSA-004`. |
-| Update | In-system updater flow | `PASS` | Built-in Updater accepted and installed local TRY32 to inactive slot A. Automatic activation remains a separate `ODESSA-004` failure. |
+| Update | Slot fallback and failed-update behavior | `PARTIAL` | TRY34 preserves successful, bootable fallback A while activating B, and prior failed-target tests automatically returned to the successful source slot. A deliberate TRY34 target-failure test was not run. |
+| Update | In-system updater flow | `PASS` | User installed exact TRY34 through built-in Updater from B to A; exact timestamp `1786476871`, slot `_a`, and `sys.boot_completed=1` prove automatic activation and boot succeeded. |
 | Telephony | SIM detection | `PASS` | User-inserted SIM on 2026-08-09; framework reports the subscription. See `journals/09-08-2026.md`. |
 | Telephony | Voice calls, incoming and outgoing | `PASS` | User reports the operator leg now completes: a real call goes through and audio round-trips on both sides. The earlier Portuguese IVR "not available right now" was a network-side condition that has cleared. `ODESSA-012` (4-5-5 vendor firmware) is no longer suspected of breaking the radio path. |
 | Telephony | SMS/MMS | `PASS` | Latest framework evidence is TRY26; TRY28 does not change the SMS/MMS code path. No SIM-required re-test was requested. |
@@ -70,7 +70,7 @@ pending.
 | Connectivity | Bluetooth MAC matches stock | `PASS` | User-confirmed on 2026-08-09 that the runtime MAC matches the stock-OS value. Address has been stable across the entire bring-up. |
 | Connectivity | Bluetooth tethering | `UNTESTED` | No Bluetooth PAN client was available. |
 | Connectivity | NFC | `PASS` | Latest hardware pass is TRY26; the kernel and BT stack did not change. |
-| Connectivity | USB data / ADB in Android | `PASS` | Read-only ADB verified TRY32 slot, timestamp, boot completion, SELinux, kernel version, and addon state |
+| Connectivity | USB data / ADB in Android | `PASS` | ADB verified exact TRY34 boot completion on automatically selected slot B and supported post-boot service/GPT checks |
 | USB | MTP file access | `UNTESTED` | `ODESSA-013` (missing USB Gadget HAL) is still open. Charter-MUST; do not ship as `PASS` until MTP enumerates from Settings and from `svc usb setFunctions mtp,adb`. |
 | USB | USB tethering | `UNTESTED` | `ODESSA-013` (missing USB Gadget HAL) is still open. RNDIS is also blocked by the same root cause. |
 | Audio | Media speaker playback and built-in microphone | `PASS` | Per Update Rule 7, TRY26 hardware-verified phone-speaker media and built-in microphone recording/playback. The audio HAL is unchanged in TRY28. |
@@ -100,26 +100,25 @@ pending.
 | Media | Hardware video encode/decode | `PASS` | Per Update Rule 7, TRY26 exercised Qualcomm H.264/HEVC/VP8/VP9 decoders and AVC encoder with generated 640x360 clips. |
 | Media | HDR10 playback | `PASS` | Per Update Rule 7, TRY26 verified live BT.2020 PQ layer and HDR static metadata on YouTube HDR. |
 | Media | exFAT filesystem | `PASS` | Per Update Rule 7, TRY26 verified in-kernel exFAT. The 4.14 kernel is below 5.7 so the in-kernel implementation is the charter-permitted choice. |
-| Recovery | LineageOS Recovery as the install path | `PASS` | User installed TRY32 through Lineage Recovery on the first attempt. The later built-in Updater attempt produced the currently running slot-A installation. |
+| Recovery | LineageOS Recovery as the install path | `PASS` | Exact TRY34 payload Recovery RAM-boots on source A with incremental `1786476871`, SELinux enforcing, and packaged service SHA-256 `812278a5...20ae`; no partition was written during this preflight |
 | Recovery | Addon packages installable through Lineage Recovery | `PASS` | Per Update Rule 7, TRY26 sideloaded MindTheGapps and Magisk as addons; satisfies the charter-MUST for LineageOS 19+ on the 23.2 build. |
 | Maintainer | GitLab account for bug tracking and cross-team collaboration | `PASS` | User has a GitLab account; routine triage and GitLab-name match remain workflow items, not pass/fail observations. |
-| Security | SELinux enforcing with no broad bypass | `PASS` | Runtime `getenforce` returns `Enforcing` on exact TRY32 slot A. This does not replace denial review or release-build validation. |
+| Security | SELinux enforcing with no broad bypass | `PASS` | Runtime `getenforce` returns `Enforcing` in exact TRY34 Recovery A and Android on both automatically selected slots. This does not replace denial review or release-build validation. |
 | Security | Verified Boot and release signing | `UNTESTED` | TRY28 is unofficial and not release-signed. Boot cmdline reports `androidboot.verifiedbootstate=orange`, which is the expected state for the bring-up vbmeta `--flags 3` documented in `MEMORY.md`; release-signed verification is a separate pre-shipment test. |
-| Optional | Google apps (MindTheGapps addon) | `PASS` | Exact TRY32 runtime has active Play Store 52.6.26-34 and Google Play services 26.29.32, with the MindTheGapps product packages retained through the addon workflow. Not part of the base ROM. |
-| Optional | Play Integrity / banking / DRM | `PASS` (post-OTA addon workflow only) | User-confirmed on 2026-08-09 that banking and DRM apps function correctly with the post-OTA addon stack (MindTheGapps + Magisk + post-OTA addon) installed via Lineage Recovery. This is a user-confirmed observation on the exact TRY28 stack, NOT a charter claim about the base ROM. The base ROM does not alter Play Integrity validation responses (charter `Play Integrity` clause) and does not bundle Magisk, keybox material, or bypass modules. Keep the post-OTA observation strictly separated from base-ROM support; the wiki must do the same. |
-| Optional | Magisk/root | `PASS` (post-OTA addon workflow only) | Exact TRY32 runtime has `magiskd`, Zygisk processes, `/product/bin/su` -> `./magisk`, and Magisk version 30700. Magisk is optional and NOT part of the base ROM. |
+| Optional | Google apps (MindTheGapps addon) | `UNTESTED` | Not installed on current exact TRY34 base-ROM runtime. Earlier TRY32 addon workflow passed; reinstall and recheck separately if desired. |
+| Optional | Play Integrity / banking / DRM | `UNTESTED` | No Google/root/addon stack is installed on current exact TRY34. Earlier user-confirmed observations do not transfer to this base-ROM baseline and are not a charter claim. |
+| Optional | Magisk/root | `UNTESTED` | Not installed on current exact TRY34 base-ROM runtime. Root used for post-boot GPT capture was userdebug `adb root`, not bundled Magisk. |
 
 ## Open Issues
 
 | ID | Area | Summary | Status | Priority | First seen | Evidence / Next step |
 | --- | --- | --- | --- | --- | --- | --- |
-| `ODESSA-004` | Install / boot control | OTA does not automatically activate a bootable target-slot state | `FAIL` | `P1` | TRY23 | TRY32 reproduced through both Lineage Recovery and the built-in Updater. After the Updater installed from B to A, automatic boot returned to the bootloader until the user restored the validated stock partition table; exact TRY32 then booted on A. Payload installation succeeds, but automatic GPT/slot activation remains broken. |
 | `ODESSA-011` | Sensors | Magnetometer declared but absent from the sensor list | `FAIL` | `P3` | TRY26 | `feature:android.hardware.sensor.compass` is declared, but `dumpsys sensorservice` lists no `android.sensor.magnetic_field` handle among 39 hardware sensors, so apps cannot obtain a heading. Trace the QMC6308 HAL/SSC configuration and extracted blob list. |
 | `ODESSA-005` | Audio | Audio works, but individual playback/capture paths are not fully verified | `PARTIAL` | `P2` | TRY23 | TRY26 passes speaker media, built-in main microphone, cellular call paths, 3.5 mm output, Bluetooth media/call/microphone, and aptX HD. USB-C audio, wired inline microphone, secondary built-in microphones, and echo cancellation remain untested. |
 | `ODESSA-009` | Kernel / power | Phone spontaneously reboots after an AOSS/RPMh timeout during UFS power transitions | `FAIL` | `P1` | TRY26 | TRY32 is now running with Qualcomm's missing mailbox `-EAGAIN` retry fix, which directly addresses the observed `TCS Busy` request being left queued forever. This is a strong root-cause candidate, not yet a hardware-verified fix. Test at 100% while USB charging with the screen off for more than two hours, then continue a 24-hour endurance window; inspect new DropBox evidence before resolving. |
 | `ODESSA-012` | Firmware | Installed vendor firmware `RPAS31.Q2-59-17-4-5-5` differs from validated restore package `RPAS31.Q2-59-17-4-3-9` | `FAIL` | `P2` | TRY26 | `getprop ro.build.fingerprint` on the running system is `motorola/odessa_retail/odessa:11/RPAS31.Q2-59-17-4-5-5/af8e3:user/release-keys`, while MEMORY.md validates the 4-3-9 package as the safe restore. Voice calls and audio work on 4-5-5, but the Aug 9 20:56 TRY31 RPMh/AOSS panic reopens the stability concern. Decide: (a) restore 4-3-9 and re-test `ODESSA-009`, (b) formally validate 4-5-5 and add it to the wiki, or (c) pin a verified 4-5-5 restore package. Its signature and provenance must be documented before it can replace 4-3-9 as the validated baseline. |
 | `ODESSA-013` | USB | MTP and RNDIS cannot be selected because the USB Gadget HAL is absent | `FAIL` | `P2` | TRY26 | Runtime logs say neither AIDL nor HIDL USB Gadget HAL is present and `Failed to open control for mtp`; standard `mtp,adb` and `rndis,adb` requests both return to ADB only. Restore a branch-current USB Gadget HAL/manifest integration, then retest MTP and USB tethering. |
-| `ODESSA-014` | Reproducibility | Manifest pins older kernel and boot-control revisions than the clean local source used for current work | `FAIL` | `P2` | TRY26 review | `manifests/odessa.xml` pins kernel `56146fa5` and bootctrl `6a856787`, while clean local HEADs are `7d6940c3` and `c49a8841`. The manifest also cannot reproduce the uncommitted GNSS fix in common. Publish and pin the exact tested revisions before release. |
+| `ODESSA-014` | Reproducibility | Manifest pins an older kernel revision than the source used for current builds | `FAIL` | `P2` | TRY26 review | Bootctrl fix `9ccc4a7` and common-tree state `1c45107e` are published and pinned. The manifest still pins kernel `56146fa5` while the tested local kernel line includes later work; publish and pin the exact tested kernel revision before release. |
 | `ODESSA-015` | FM radio | Vendor FM HAL runs but no FM application is installed | `FAIL` | `P3` | TRY26 | Stock supports FM; `vendor.qti.hardware.fm@1.0` runs, but package inventory has no FM radio app. Add the appropriate LineageOS FM client only after validating it against this HAL. |
 | `ODESSA-016` | Proprietary files | Non-default pinned GPU firmware lacks its required source comment | `FAIL` | `P3` | TRY26 review | Both lists correctly identify the default Tequila ZIP and its SHA-256. Four pinned `a615_zap` files are a non-default source but the `# Graphics firmware` section does not identify that source, violating the charter's pin-plus-source-comment rule. Record their exact source artifact/partition without adding device-unique data. |
 
@@ -142,6 +141,7 @@ Priorities are `P0` (device safety/data loss), `P1` (core phone function or boot
 | `ODESSA-006` | Auxiliary cameras needed a curated Aperture selector | TRY26 | Product Aperture v16 exposed only main, ultrawide, and macro; user captured and opened a photo from each on 2026-08-08. |
 | `ODESSA-008` | Tethering deadlocked on mismatched offload HAL, then `dnsmasq` spawn failed without `close_range` | TRY28 | TRY27 proved the manifest 1.1 fix removed the deadlock but exposed `dnsmasq` exit 127. TRY28's syscall 436 backport keeps hotspot enabled; client DNS and routed Internet pass, `dnsmasq`/`ipacm` remain live, and prior runtime errors are absent. |
 | `ODESSA-010` | Screen sometimes remained black and the phone was mostly unresponsive to power-key attempts | TRY31 | User reports >24 h without the black-screen symptom and normal screen sleep/wake and haptics. The later `ODESSA-009` panic changes suspend/idle to `PARTIAL`, but it did not reproduce the distinct black/unresponsive-screen symptom, so this issue remains resolved. |
+| `ODESSA-004` | OTA activation performed only one half of Odessa's required XBL-chain slot switch | TRY34 | Exact TRY34 A-to-B Recovery sideload completed status 0 and verified all seven hashes; both GPT copies, boot LUN 3, automatic B boot, both-slot success, and clean B success-bit promotion were verified. The user then independently passed built-in Updater B-to-A; exact TRY34 A reached boot complete without manual selection. |
 
 ## Update Rules
 

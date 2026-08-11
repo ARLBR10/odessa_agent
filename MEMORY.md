@@ -343,6 +343,101 @@ re-verify device state before any device-changing command.
   kernel build `#14`, boot completion, enforcing SELinux, and retained optional
   MindTheGapps/Magisk addons. `ODESSA-009` remains open pending charging/screen-
   off reproduction and at least 24 hours of endurance testing.
+- **ODESSA-004 source audit (2026-08-11):** the local bootctrl source, TRY32
+  build graph, and Soong variables contain the TRY14-proven hybrid encoding:
+  target/inactive `boot` = `0x3f`/`0x3a`, all other A/B partitions =
+  `0x04`/`0x00`, with XBL selected by GPT and no UFS boot-LUN switch. The
+  manifest was still pinned to incomplete `6a856787`, which writes `boot` as
+  `0x04`; it now pins published `9c255f8b`. This fixes reproducibility but does
+  not by itself explain TRY26-TRY32 because those local builds appear to have
+  used the later source. Their reports lack an immediate post-install GPT
+  capture; TRY26 proves only that the target exhausted all retries and then
+  booted after MBM reset them. Do not weaken fallback by marking a new slot
+  successful. The next update test must capture GPT before install, immediately
+  after status 0, and after the first failed boot before any GPT restore.
+- **TRY32 fallback-state finding, later shown incomplete (2026-08-11):** exact TRY32 installed
+  A-to-B with status 0 and byte-exact target boot-chain images. Bootctrl wrote
+  the intended active-B values but cleared the known-good inactive A slot's
+  successful state (`0x00`, `boot_a=0x3a`). MBM accepted B, exhausted every
+  retry, marked only `boot_b=0x80`, and restored A byte-for-byte; no GPT
+  corruption occurred. Motorola `fastboot set_active b` left the boot LUN at 2
+  and recreated the same active-B attributes/GUIDs, but preserved successful A
+  as `0x40` with `boot_a=0x72`. Installed Recovery B and Android B then booted
+  immediately, and Android marked B `0x44`/`boot_b=0x77`. This established that
+  bootctrl should reproduce MBM's safe fallback encoding, but did not isolate
+  the boot failure because `set_active` also changes the boot LUN used on the
+  next boot. The resulting local candidate reproduced MBM's GPT behavior:
+  preserve only the successful bit on inactive non-boot partitions and use
+  `0x72` for an inactive successful boot partition; use `0x00`/`0x3a` only when
+  the inactive slot was not successful. Build and automatic-OTA hardware
+  validation remained pending. TRY33 subsequently proved this was necessary
+  safety behavior but not the missing activation operation.
+- **TRY33 candidate artifact-verified (2026-08-11):** the preserved single-link
+  OTA SHA-256 is `71d369cc6b147206bdf6b39716c0a5fd000c6bde4e1153072c4a0bcccf16afed`.
+  ZIP integrity and VINTF pass; native extraction reproduces all seven
+  target-files partitions byte-for-byte. Exact Recovery and Android boot-control
+  binaries are packaged. Recovery disassembly proves active boot `0x3f`, a test
+  of old successful bit `0x40`, inactive successful boot `0x72`, unsuccessful
+  boot `0x3a`, and inactive non-boot successful-bit preservation. Installation
+  and an automatic A/B first boot remain the hardware acceptance test.
+- **TRY33 disproved the fallback-only fix and proved final ODESSA-004 cause
+  (2026-08-11):** the new Recovery wrote the exact MBM-style GPT state, including
+  successful inactive B (`0x40`/`0x72`), but automatic target A still exhausted
+  retries and fell back. No new target-kernel last-kmsg was retained. Before the
+  approved `fastboot set_active a`, `running-boot-lun` was **3**; MBM changed it
+  to **2** while producing a GPT byte-for-byte identical to the failed post-OTA
+  capture. Installed TRY33 Recovery A and Android A then booted immediately.
+  Thus Odessa requires both independent operations: switch all XBL-chain GPT
+  attributes and switch UFS `bBootLunEn` to the target. The old near-brick came
+  from upstream switching only the boot LUN while skipping XBL GPT attributes,
+  not from the LUN switch itself. Final local candidate removes the Odessa
+  `gpt_utils_set_xbl_boot_partition()` no-op, retains the GPT and successful-
+  fallback fixes, and uses the already-selected legacy `/dev/sg*` transport.
+  Build and a new automatic OTA test are pending; TRY33 is not the fixed build.
+- **TRY34 final ODESSA-004 candidate artifact-verified (2026-08-11):** exact OTA
+  `lineage-23.2-20260811-TRY34-UNOFFICIAL-odessa.zip`, incremental/timestamp
+  `1786476871`, size `1,028,383,511`, SHA-256
+  `620b1bad2d3cd0a431824340978e8a81e5ad645bf21b9d8d68a616cdca33a41c`.
+  It is preserved as a single-link Btrfs reflink and passes ZIP integrity and
+  VINTF against `4.14.357-openela-perf+`. All seven extracted payload images
+  reproduce target-files byte-for-byte (product/system after sparse expansion),
+  and payload SHA-256 matches `payload_properties.txt`. Exact packaged Recovery
+  is separately preserved as `lineage-23.2-20260811-TRY34-UNOFFICIAL-odessa-
+  recovery.img`, SHA-256
+  `83a6697aea8f491e2aa563feb9c5118864cf0313a627b298ed70105dde8d32b3`;
+  do not substitute the later standalone `recovery.img`. Binary disassembly
+  proves Recovery retains `0x3f`/`0x04` activation and `0x72`/`0x3a`/`0x40`
+  fallback logic, calls `gpt_utils_set_xbl_boot_partition()`, and that function
+  reaches legacy-SG `set_boot_lun()` rather than the removed no-op. Hardware
+  preflight then RAM-booted that exact Recovery on source slot A: runtime
+  incremental `1786476871`, SELinux enforcing, and service SHA-256 exactly
+  `812278a5141039b933de3d98f109afb4a5542b120828c45c1d537df9fe3d20ae`.
+  Automatic A-to-B acceptance remains pending.
+- **ODESSA-004 fixed on hardware by TRY34 (2026-08-11):** exact RAM-booted
+  TRY34 Recovery A sideloaded the verified full OTA A-to-B with status 0 and
+  Update Engine rehashed every target image successfully. Immediate GPT capture
+  showed valid primary/backup CRCs, all 24 B boot-chain entries active
+  (`0x04`, `boot_b=0x3f`), and successful fallback A preserved (`0x40`,
+  `boot_a=0x72`). Without any manual slot selection, bootloader then reported
+  current slot B, slot count 2, UFS boot LUN 3, seven B retries, and successful,
+  bootable A. Normal reboot reached exact TRY34 incremental `1786476871` on B,
+  `sys.boot_completed=1`, SELinux enforcing, file encryption active. Android
+  bootctrl SHA-256 matched the package; AIDL `bootctl` reported both slots
+  successful and bootable. Post-boot GPT diff changed only B success bits:
+  non-boot `0x04→0x44`, boot `0x3f→0x77`. This proves the complete fix is the
+  combination of all-XBL-chain GPT switching, successful fallback preservation,
+  and matching UFS boot-LUN switching. TRY34 is the first hardware-verified
+  fixed build. The user then independently installed the same TRY34 package with
+  the built-in Updater B-to-A; read-only runtime checks proved exact incremental
+  `1786476871`, slot A, boot complete, SELinux enforcing, and file encryption.
+  This verifies both installation front ends and both slot directions.
+- **ODESSA-004 source published and pinned (2026-08-11):** hardware-verified
+  bootctrl commit `9ccc4a788eede6830cbe0de57df3ccf373d4a002` is published on
+  `ARLBR10/android_hardware_qcom_bootctrl` `lineage-23.2`. Corrected common-tree
+  documentation commit `1c45107ecb027eef49777ed57bbe1f7fcb4c1bb5` is published
+  on `ARLBR10/android_device_motorola_sm6150-common` `lineage-23.2`. The manifest
+  pins both immutable revisions. Kernel manifest reproducibility remains tracked
+  separately as `ODESSA-014`.
 - **TRY26 USB/tethering blockers (2026-08-08):** SoftAP starts and is visible,
   but Settings repeatedly ANRs in `TetheringManager.getTetherableUsbRegexs()`
   waiting for tethering startup (`ODESSA-008`). MTP and RNDIS requests both fall
@@ -535,11 +630,12 @@ re-verify device state before any device-changing command.
 - Proprietary blobs come solely from the exact installed TequilaOS payload ZIP
   (SHA-256 `2eebc8ee17bcbc3a28d96b7b1dbf1b6769c6281d437194fbf582f0e2b365fdb6`);
   lists revalidated with zero missing/mismatched files.
-- Repos live on `lineage-23.2` branches. `manifests/odessa.xml` pins the published
-  `ARLBR10` Odessa (`fc7495d`), SM6150 common (`e4b352ff`), BPF-backported kernel
-  (`56146fa`), and bootctrl (`6a85678`) commits. The two vendor
-  repositories remain local/private and are not manifest projects. Never commit
-  logs or captures containing identifiers.
+- Repos live on `lineage-23.2` branches. `manifests/odessa.xml` pins published
+  `ARLBR10` Odessa (`4926de5c`), SM6150 common (`1c45107e`), kernel
+  (`56146fa5`), and complete bootctrl (`9ccc4a7`) commits. The kernel pin still
+  lags later tested local work and remains tracked by `ODESSA-014`. The two
+  vendor repositories remain local/private and are not manifest projects. Never
+  commit logs or captures containing identifiers.
 - A 2026-07-29 sync recreated Odessa/common at the old public historical manifest
   pins and caused `lunch` to fail on the obsolete `sepolicy_vndr-legacy-um` path.
   The commits were recovered from their `ARLBR10` branches and the manifest pins
