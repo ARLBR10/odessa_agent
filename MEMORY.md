@@ -268,7 +268,14 @@ re-verify device state before any device-changing command.
   BrightnessTracker, ThresholdSensorImpl, WindowOrientationListener,
   FaceDownDetector). Magnetometer (`feature:android.hardware.sensor.compass`)
   is declared but the `android.sensor.magnetic_field` handle is missing and
-  9-axis fusion reports 0 clients; `ODESSA-011` (P3). Display is
+  9-axis fusion reports 0 clients; `ODESSA-011` (P3). Exact TRY34 runtime
+  reproduced the absence among the same 39 sensors on 2026-08-11, despite the
+  QMC6308 JSON being packaged and matching platform `IDP` / SoC ID 365. A
+  2026-08-13 investigation found the loaded ADSP does contain `sns_qmc6308`, but
+  the preserved stock-created 2020 `sensors_list.txt` also omits a magnetometer.
+  The exact XT2087-1 therefore did not expose this optional device under stock;
+  the real ROM defect is the unconditional common-tree compass declaration,
+  which is now removed in source pending build/runtime verification. Display is
   1080×2400 @ 420 dpi @ 60 Hz, matching stock spec, with HDR10/HLG/HDR10+
   declared. `dumpsys fingerprint` shows `FingerprintProvider/defaultHIDL`
   running with one enrolled print and 0 HAL deaths; resolves `ODESSA-003`.
@@ -343,6 +350,13 @@ re-verify device state before any device-changing command.
   kernel build `#14`, boot completion, enforcing SELinux, and retained optional
   MindTheGapps/Magisk addons. `ODESSA-009` remains open pending charging/screen-
   off reproduction and at least 24 hours of endurance testing.
+- **ODESSA-009 hardware-resolved on TRY34 (2026-08-11):** user-reported 22 h+
+  uptime on TRY34 ending with a manual reboot and no spontaneous reboot, RPMh
+  panic, or `BUG()` at `drivers/soc/qcom/rpmh.c:209`. The TRY32 Qualcomm mailbox
+  `-EAGAIN` retry fix is hardware-verified. The Aug 9 20:56 `pm_runtime_work`
+  and the four earlier Aug 5–6 `ufshcd_gate_work` reproductions did not recur.
+  `ODESSA-009` moves to Resolved Bring-Up Issues; `ODESSA-012` (4-5-5 vs 4-3-9
+  firmware) remains independently open and is unaffected by this evidence.
 - **ODESSA-004 source audit (2026-08-11):** the local bootctrl source, TRY32
   build graph, and Soong variables contain the TRY14-proven hybrid encoding:
   target/inactive `boot` = `0x3f`/`0x3a`, all other A/B partitions =
